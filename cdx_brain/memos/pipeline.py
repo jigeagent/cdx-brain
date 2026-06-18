@@ -41,6 +41,8 @@ class CognitivePipelineConfig:
             PipelineStage.L1_CAPTURE,
             PipelineStage.REWARD,
             PipelineStage.L2_INDUCTION,
+            PipelineStage.L3_WORLD_MODEL,
+            PipelineStage.SKILL_CRYSTALLIZATION,
         }
     )
     """Which stages are active. L3 and Skill are opt-in by default."""
@@ -77,6 +79,7 @@ class CognitivePipeline:
         self._policies: list[PolicyRow] = []
         self._skills: list[SkillRow] = []
         self._current_traces: list[TraceRow] = []
+        self._session_count = 0
 
     # ── Hooks ─────────────────────────────────────────────
 
@@ -127,6 +130,8 @@ class CognitivePipeline:
         Returns:
             Results from each active pipeline stage.
         """
+        self._session_count += 1
+
         results: dict[str, Any] = {
             "stage": {},
             "new_policies": [],
@@ -279,3 +284,51 @@ class CognitivePipeline:
         self.reward_engine = RewardEngine(self._config.reward)
         self.policy_inducer = PolicyInducer(self._config.policy)
         self.skill_crystallizer = SkillCrystallizer(self._config.skill)
+
+
+    # -- State Persistence ----------------------------------
+
+    def save_state(self, config_dir: str = "") -> None:
+        """Persist pipeline state (policies, skills, world model) to JSON."""
+        import json
+        from pathlib import Path
+        base = Path(config_dir) if config_dir else Path.home() / ".cdx-brain" / "data"
+        base.mkdir(parents=True, exist_ok=True)
+        path = base / "pipeline_state.json"
+        state = {
+            "version": 1,
+            "session_count": getattr(self, "_session_count", 0),
+            "policies": [p.to_dict() for p in self._policies],
+            "skills": [s.to_dict() for s in self._skills],
+            "world_model": self.world_model.to_dict(),
+        }
+        path.write_text(json.dumps(state, ensure_ascii=False, default=str), encoding="utf-8")
+
+    @classmethod
+    def load_state(
+        cls,
+        config_dir: str = "",
+        config: Optional[CognitivePipelineConfig] = None,
+    ) -> "CognitivePipeline":
+        """Load pipeline state from JSON, returning a fresh pipeline."""
+        import json
+        from pathlib import Path
+        pipeline = cls(config)
+        base = Path(config_dir) if config_dir else Path.home() / ".cdx-brain" / "data"
+        path = base / "pipeline_state.json"
+        if not path.is_file():
+            return pipeline
+        try:
+            state = json.loads(path.read_text("utf-8"))
+            pipeline._session_count = state.get("session_count", 0)
+            pipeline._policies = [PolicyRow.from_dict(p) for p in state.get("policies", [])]
+            pipeline._skills = [SkillRow.from_dict(s) for s in state.get("skills", [])]
+            wm_data = state.get("world_model", {})
+            if wm_data:
+                pipeline.world_model = WorldModel.from_dict(wm_data, pipeline._config.world_model)
+            logger.info("pipeline state loaded: %d policies, %d skills, %d sessions",
+                        len(pipeline._policies), len(pipeline._skills), pipeline._session_count)
+        except (OSError, json.JSONDecodeError, KeyError) as exc:
+            logger.warning("pipeline state load failed: %s", exc)
+        return pipeline
+
