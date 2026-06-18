@@ -26,6 +26,7 @@ from typing import Any
 from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
 from cdx_brain.cache.traces import TraceRepository
+from cdx_brain.cache.decay import run_decay, format_decay_report
 from cdx_brain.config import ConfigManager
 from cdx_brain.promote_gate import (
     evaluate_gate, load_gate_state, save_gate_state, update_gate_state,
@@ -782,6 +783,30 @@ def run_maintenance(dry_run: bool = False) -> dict[str, Any]:
         "startup_health": check_startup_health(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+    # -- Memory Decay (compact mode) --
+    if DECAY_ENABLED and compact:
+        cold_path = DECAY_COLD_PATH or str(Path(CACHE_PATH).parent / "cold.db")
+        try:
+            dr = run_decay(
+                cache_path=CACHE_PATH,
+                cold_db_path=cold_path,
+                dry_run=dry_run,
+                pipeline_state_path=str(Path(CACHE_PATH).parent / "pipeline_state.json"),
+            )
+            result["decay"] = {
+                "traces_cold": dr.traces_cold,
+                "traces_archived": dr.traces_archived,
+                "policies_decayed": dr.policies_decayed,
+                "policies_archived": dr.policies_archived,
+                "concepts_decayed": dr.concepts_decayed,
+            }
+            if not dry_run and dr.traces_cold > 0:
+                sys.stderr.write(f"[promote] decay: {format_decay_report(dr)}\n")
+        except Exception as exc:
+            sys.stderr.write(f"[promote] decay error: {exc}\n")
+
+
     return results
 
 

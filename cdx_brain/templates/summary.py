@@ -187,6 +187,22 @@ def main() -> None:
             f"first: {info['first_prompt'][:40]}...\n"
         )
 
+    # Lightweight memory decay (run every ~10 sessions)
+    try:
+        import random
+        if random.random() < 0.1:
+            from cdx_brain.cache.decay import run_decay
+            dr = run_decay(
+                cache_path=CACHE_PATH,
+                cold_db_path=str(Path(CACHE_PATH).parent / "cold.db"),
+                dry_run=False,
+                pipeline_state_path=str(Path(CACHE_PATH).parent / "pipeline_state.json"),
+            )
+            if dr.traces_cold > 0 or dr.policies_decayed > 0:
+                print(f"[summary] decay: {dr.traces_cold} cold, {dr.policies_decayed} policies", file=sys.stderr)
+    except Exception:
+        pass
+
     # Batch sync unsynced traces
     try:
         cache = CacheConnection(CACHE_PATH)

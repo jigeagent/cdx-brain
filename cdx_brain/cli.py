@@ -438,6 +438,29 @@ def _check_ov_health(url: str) -> bool:
         return False
 
 
+
+
+def cmd_decay(args: argparse.Namespace) -> None:
+    """Run memory decay independently."""
+    cfg_mgr = _get_config_manager()
+    cache_path = str(cfg_mgr.data_dir / "cache.db")
+    cold_db = os.path.expanduser(args.cold_db) if args.cold_db else str(cfg_mgr.data_dir / "cold.db")
+    pipeline_state = str(cfg_mgr.data_dir / "pipeline_state.json")
+
+    from cdx_brain.cache.decay import run_decay, format_decay_report
+    result = run_decay(
+        cache_path=cache_path,
+        cold_db_path=cold_db,
+        dry_run=args.dry_run,
+        pipeline_state_path=pipeline_state,
+    )
+    print()
+    print(format_decay_report(result))
+    if result.traces_archived > 0 or result.policies_archived > 0:
+        print(f"  Cold DB: {cold_db}")
+    print()
+
+
 def main() -> None:
     """Entry point for cdx-brain CLI."""
     parser = argparse.ArgumentParser(
@@ -476,6 +499,14 @@ def main() -> None:
 
     # promote
     promote_p = sub.add_parser("promote", help="Run memory maintenance (cache limit, dedup, hot promote)")
+    
+
+    # decay
+    decay_p = sub.add_parser("decay", help="Run memory decay: cold storage + policy aging + concept pruning")
+    decay_p.add_argument("--dry-run", "-n", action="store_true",
+                         help="Preview without making changes")
+    decay_p.add_argument("--cold-db", default="",
+                         help="Cold storage DB path")
     promote_p.add_argument("--dry-run", "-n", action="store_true",
                            help="Preview without making changes")
 

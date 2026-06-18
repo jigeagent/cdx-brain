@@ -88,6 +88,18 @@ def ensure_schema(conn_or_cache: CacheConnection) -> None:
     conn.commit()
 
 
+
+
+
+def ensure_decay_migration(conn_or_cache) -> None:
+    """Add cold column to traces if missing (safety migration)."""
+    conn = conn_or_cache.conn if hasattr(conn_or_cache, "conn") else conn_or_cache
+    try:
+        conn.execute("ALTER TABLE traces ADD COLUMN cold INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except Exception:
+        pass  # Column already exists
+
 def drop_schema(conn_or_cache: CacheConnection) -> None:
     """Drop all tables (for testing)."""
     conn = conn_or_cache.conn if isinstance(conn_or_cache, CacheConnection) else conn_or_cache
