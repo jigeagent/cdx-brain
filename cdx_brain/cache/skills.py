@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
-from cdx_brain.memos.types import SkillRow
+from cdx_brain.memos.memo_types import SkillRow
 
 
 class SkillRepository:

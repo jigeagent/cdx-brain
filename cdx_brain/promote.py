@@ -731,7 +731,7 @@ def check_startup_health() -> dict[str, Any]:
     result: dict[str, Any] = {"action": "startup_health"}
     db_path = _cachedb_path()
     data_dir = Path(db_path).parent
-    health_file = data_dir / ".cc_star_health"
+    health_file = data_dir / ".cdx_brain_health"
 
     now = datetime.now(timezone.utc)
 

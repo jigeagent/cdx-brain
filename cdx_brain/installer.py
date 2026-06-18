@@ -155,7 +155,7 @@ def _get_template_vars(config: dict[str, Any]) -> dict[str, str]:
     ov_enabled = config.get("ov", {}).get("enabled", False)
 
     return {
-        "agent_name": config.get("agent", {}).get("name", "codex"),
+        "agent_name": config.get("agent", {}).get("name", "comsam"),
         "tags": json.dumps(config.get("agent", {}).get("tags", ["codex"])),
         "data_dir": storage_path,
         "cache_path": os.path.join(storage_path, "cache.db"),
@@ -288,7 +288,7 @@ class HookInstaller:
 
     def _write_initial_memories(self, mem_dir: Path, config: dict[str, Any]) -> None:
         """Write initial core memory files when native memory dir is empty."""
-        agent_name = config.get("agent", {}).get("name", "codex")
+        agent_name = config.get("agent", {}).get("name", "comsam")
         memories = {
             "cdx-brain-memory-system.md": (
                 "# cdx-brain 记忆系统\n\n"
@@ -343,9 +343,9 @@ class HookInstaller:
             return False
 
         modified = False
-        cc_star_events = set(HOOK_EVENTS.keys())
+        cdx_brain_events = set(HOOK_EVENTS.keys())
 
-        for event in cc_star_events:
+        for event in cdx_brain_events:
             if event in hooks:
                 original = list(hooks[event])
                 hooks[event] = [

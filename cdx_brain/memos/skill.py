@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from cdx_brain.memos.types import PolicyRow, SkillRow
+from cdx_brain.memos.memo_types import PolicyRow, SkillRow
 
 logger = logging.getLogger(__name__)
 

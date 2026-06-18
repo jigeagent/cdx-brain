@@ -23,7 +23,7 @@ from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
 from cdx_brain.cache.traces import TraceRepository
 
-from cc_star import __version__
+from cdx_brain import __version__
 from cdx_brain.config import ConfigManager
 from cdx_brain.installer import HookInstaller
 

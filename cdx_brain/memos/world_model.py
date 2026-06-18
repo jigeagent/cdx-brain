@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from cdx_brain.memos.id import new_id
-from cdx_brain.memos.types import PolicyRow, TraceRow
+from cdx_brain.memos.memo_types import PolicyRow, TraceRow
 
 logger = logging.getLogger(__name__)
 

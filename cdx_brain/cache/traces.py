@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
-from cdx_brain.memos.types import TraceRow
+from cdx_brain.memos.memo_types import TraceRow
 
 
 class TraceRepository:

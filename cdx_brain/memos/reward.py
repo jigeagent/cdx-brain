@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from cdx_brain.memos.types import TraceRow
+from cdx_brain.memos.memo_types import TraceRow
 
 logger = logging.getLogger(__name__)
 

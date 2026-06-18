@@ -17,7 +17,7 @@ from cdx_brain.memos.retrieval import (
     retrieve_semantic,
     retrieve_timeline,
 )
-from cdx_brain.memos.types import TraceRow
+from cdx_brain.memos.memo_types import TraceRow
 from cdx_brain.ov.client import OpenVikingClient
 from cdx_brain.ov.session import OVSession
 

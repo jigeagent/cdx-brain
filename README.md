@@ -23,7 +23,7 @@
 ### 一条命令安装
 
 ```bash
-pip install cdx-brain-codex && cdx-brain init
+pip install cdx-brain && cdx-brain init
 ```
 
 ### 无需 MCP 配置

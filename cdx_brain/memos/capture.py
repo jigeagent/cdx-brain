@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from cdx_brain.memos.id import new_id
-from cdx_brain.memos.types import TraceRow
+from cdx_brain.memos.memo_types import TraceRow
 from cdx_brain.ov.client import OpenVikingClient
 
 logger = logging.getLogger(__name__)

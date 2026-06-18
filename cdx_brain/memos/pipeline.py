@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 from cdx_brain.memos.policy import PolicyConfig, PolicyInducer, PolicyRow
 from cdx_brain.memos.reward import OutcomeSignal, RewardConfig, RewardEngine
 from cdx_brain.memos.skill import SkillCrystallizer, SkillCrystallizerConfig, SkillRow
-from cdx_brain.memos.types import TraceRow
+from cdx_brain.memos.memo_types import TraceRow
 from cdx_brain.memos.world_model import WorldModel, WorldModelConfig
 
 logger = logging.getLogger(__name__)

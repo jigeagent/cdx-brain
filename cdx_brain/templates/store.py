@@ -20,7 +20,8 @@ from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
 from cdx_brain.cache.traces import TraceRepository
 from cdx_brain.memos.id import new_id
-from cdx_brain.memos.types import TraceRow
+from cdx_brain.memos.memo_types import TraceRow
+import sqlite3
 
 # ── Runtime config ──
 try:
@@ -151,6 +152,31 @@ def try_sync_ov(trace: TraceRow) -> bool:
     except Exception as e:
         print(f"[store] OV sync error: {e}", file=sys.stderr)
         return False
+
+
+
+def _write_codex_stage1(user_content, assistant_content, session_id, timestamp):
+    """Dual-write to Codex native memories_1.sqlite stage1_outputs."""
+    codex_home = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
+    mem_db = os.path.join(codex_home, "memories_1.sqlite")
+    if not os.path.isfile(mem_db):
+        return
+    try:
+        raw = f"U: {user_content[:300]}\nA: {assistant_content[:500]}"
+        summary = (user_content[:150] or assistant_content[:150]).strip()
+        now = int(time.time())
+        conn = sqlite3.connect(mem_db)
+        conn.execute(
+            "INSERT OR REPLACE INTO stage1_outputs "
+            "(thread_id, source_updated_at, raw_memory, rollout_summary, "
+            "generated_at, usage_count, selected_for_phase2) "
+            "VALUES (?, ?, ?, ?, ?, 1, 0)",
+            (session_id or "unknown", now, raw, summary, now),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        sys.stderr.write(f"[store] codex stage1 write error: {e}\n")
 
 
 # ── Memory Promotion ──
@@ -367,6 +393,9 @@ def main() -> None:
             pass
 
     cache.close_all()
+
+    # Dual-write to Codex native memory system
+    _write_codex_stage1(user_content, assistant_content, session_id, timestamp)
 
     # Memory promotion (best-effort, after main storage)
     _do_promote(user_content, assistant_content)
