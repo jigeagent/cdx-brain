@@ -3,7 +3,7 @@
 > **Filed under:** [CC-STAR-2026-06-07] Windows production environment pitfall log.
 > **Author:** leopard@jige
 
-cc-star works on Windows, but Claude Code has several Windows-specific quirks you need to know. This guide covers every pitfall we've encountered in production.
+cdx-brain works on Windows, but Claude Code has several Windows-specific quirks you need to know. This guide covers every pitfall we've encountered in production.
 
 ---
 
@@ -12,7 +12,7 @@ cc-star works on Windows, but Claude Code has several Windows-specific quirks yo
 Run this PowerShell script to check your installation:
 
 ```powershell
-Write-Host "=== cc-star Quick Diagnosis ===" -ForegroundColor Cyan
+Write-Host "=== cdx-brain Quick Diagnosis ===" -ForegroundColor Cyan
 
 # 1. settings.json path format (P0)
 $settings = Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw
@@ -31,15 +31,15 @@ if ($token) {
     Write-Host "[FAIL] ANTHROPIC_AUTH_TOKEN not set" -ForegroundColor Red
 }
 
-# 3. cc-star hooks directory
-$hooksDir = "$env:USERPROFILE\.cc-star\hooks"
+# 3. cdx-brain hooks directory
+$hooksDir = "$env:USERPROFILE\.cdx-brain\hooks"
 $requiredFiles = @("inject.py", "store.py", "summary.py", "compact.py", "session_start.py")
 $missing = @()
 foreach ($f in $requiredFiles) {
     if (-not (Test-Path "$hooksDir\$f")) { $missing += $f }
 }
 if ($missing.Count -eq 0) {
-    Write-Host "[PASS] cc-star hooks all present" -ForegroundColor Green
+    Write-Host "[PASS] cdx-brain hooks all present" -ForegroundColor Green
 } else {
     Write-Host "[FAIL] Missing hooks: $($missing -join ', ')" -ForegroundColor Red
 }
@@ -71,16 +71,16 @@ Write-Host "`nDiagnosis complete." -ForegroundColor Cyan
 ### Symptom
 
 ```
-[python C:\Users\Administrator\.cc-star\hooks\inject.py]:
+[python C:\Users\Administrator\.cdx-brain\hooks\inject.py]:
 C:\Program Files\Python312\python.exe: can't open file
-'C:\UsersAdministrator.cc-starhooksinject.py': [Errno 2] No such file or directory
+'C:\UsersAdministrator.cdx-brainhooksinject.py': [Errno 2] No such file or directory
 ```
 
 The backslashes `\` are re-interpreted by the Claude Code hook execution layer:
 - `\U` → Unicode escape → consumed
 - `\A` → ASCII bell `\a` → consumed
 - `\h` → escape sequence → consumed
-- Result: `C:\Users\Administrator\.cc-star\hooks\inject.py` → `C:UsersAdministrator.cc-starhooksinject.py`
+- Result: `C:\Users\Administrator\.cdx-brain\hooks\inject.py` → `C:UsersAdministrator.cdx-brainhooksinject.py`
 
 ### Fix
 
@@ -88,15 +88,15 @@ The backslashes `\` are re-interpreted by the Claude Code hook execution layer:
 
 ```json
 // ❌ WRONG — backslashes will be re-escaped
-{ "command": "python C:\\Users\\Administrator\\.cc-star\\hooks\\inject.py" }
+{ "command": "python C:\\Users\\Administrator\\.cdx-brain\\hooks\\inject.py" }
 
 // ✅ CORRECT — forward slashes work on both Windows and Claude Code
-{ "command": "python C:/Users/Administrator/.cc-star/hooks/inject.py" }
+{ "command": "python C:/Users/Administrator/.cdx-brain/hooks/inject.py" }
 ```
 
 ### Root cause
 
-`cc-star init` used `str(Path(...))` which produces backslashes on Windows.
+`cdx-brain init` used `str(Path(...))` which produces backslashes on Windows.
 **Fixed in v0.2.4+** — `installer.py` now uses `Path.as_posix()` to always emit forward slashes.
 
 If you're on an older version, run this PowerShell fix:
@@ -284,7 +284,7 @@ Your authentication is fine.
 
 Use this for fresh installs or after reinstalling Windows:
 
-- [ ] `cc-star init` completed without errors
+- [ ] `cdx-brain init` completed without errors
 - [ ] `settings.json` hooks → command paths all use `/` (forward slashes)
 - [ ] API keys set in system/user environment variables (not just `settings.json` `env`)
 - [ ] Opened a **new terminal** and verified `claude` starts without "Not logged in"
@@ -294,8 +294,8 @@ Use this for fresh installs or after reinstalling Windows:
   node -e "require('child_process').spawn('claude', ['--version'], {stdio:'pipe'}).on('error',e=>console.log('FAIL:',e.message)).on('exit',c=>console.log('OK'))"
   ```
   Should print `OK`, not `FAIL`.
-- [ ] cc-star hook files exist: `~/.cc-star/hooks/{inject,store,summary,compact,session_start}.py`
-- [ ] `cc-star status` reports healthy
+- [ ] cdx-brain hook files exist: `~/.cdx-brain/hooks/{inject,store,summary,compact,session_start}.py`
+- [ ] `cdx-brain status` reports healthy
 - [ ] (Optional) OpenViking server running: `curl http://localhost:1933/health` → 200
 - [ ] (If using MCP) Each `mcp.json` entry verified — command exists and runs
 

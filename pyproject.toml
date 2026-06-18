@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cc-star"
+name = "cdx-brain"
 version = "0.4.1"
 description = "Codex class brain memory system — three-tier memory architecture — SQLite+FTS5 hot storage, L1→L2→L3 cognitive pipeline (policy induction, skill crystallization, world model), optional OpenViking cold sync, and built-in viewer"
 readme = "README.md"
@@ -16,11 +16,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jigeagent/cc-star"
-Repository = "https://github.com/jigeagent/cc-star"
+Homepage = "https://github.com/jigeagent/cdx-brain"
+Repository = "https://github.com/jigeagent/cdx-brain"
 
 [project.scripts]
-cc-star = "cc_star.cli:main"
+cdx-brain = "cdx_brain.cli:main"
 
 [tool.hatch.build]
 exclude = ["tests/"]

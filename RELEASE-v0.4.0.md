@@ -1,4 +1,4 @@
-# cc-star v0.4.0 — 验证门控版
+# cdx-brain v0.4.0 — 验证门控版
 
 > 2026-06-13
 > 从 v0.3.1 升级
@@ -14,7 +14,7 @@
 - **三种指标** — `hard`（刚性打分）/ `soft`（FTS5 相似度）/ `mixed`（加权融合，默认）
 - **双线追踪** — `current_score` + `best_score` 持久化到 `gate_state.json`
 - **拒绝缓冲** — 被 gate 拒绝的候选记入 `reject_log.jsonl`，不丢信息
-- **可关闭** — `CC_STAR_GATE_ENABLED=false` 退化为旧版单向晋升
+- **可关闭** — `CDX_BRAIN_GATE_ENABLED=false` 退化为旧版单向晋升
 
 ## 改进
 
@@ -34,7 +34,7 @@
 
 - [x] 默认开启门控（behavior change: 晋升从单向→验证）
 - [x] 前向兼容：`--dry-run` 显示 gate 决策
-- [x] 降级开关：`CC_STAR_GATE_ENABLED=false`
+- [x] 降级开关：`CDX_BRAIN_GATE_ENABLED=false`
 - [x] `gate_state.json` 首次运行自动初始化 baseline
 
 ## 技术债务

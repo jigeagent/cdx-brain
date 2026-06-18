@@ -1,4 +1,4 @@
-# cc-star — Codex 类脑记忆系统
+# cdx-brain — Codex 类脑记忆系统
 
 **不是记忆插件。是认知引擎。**
 
@@ -8,9 +8,9 @@
 ┌─────────────────────────────────────────────────┐
 │           原生记忆 (Codex extensions)            │
 │  精炼 · 必需 · session 启动自动加载              │
-│  promoted by cc-star promote_gate               │
+│  promoted by cdx-brain promote_gate               │
 ├─────────────────────────────────────────────────┤
-│            热记忆 (cc-star cache.db)             │
+│            热记忆 (cdx-brain cache.db)             │
 │  全部对话 · FTS5 全文检索 · 按需注入             │
 │  Stored by Stop hook → cache.db                 │
 ├─────────────────────────────────────────────────┤
@@ -23,7 +23,7 @@
 ### 一条命令安装
 
 ```bash
-pip install cc-star-codex && cc-star init
+pip install cdx-brain-codex && cdx-brain init
 ```
 
 ### 无需 MCP 配置
@@ -34,7 +34,7 @@ pip install cc-star-codex && cc-star init
 
 ## 对比
 
-| 对比维度 | cc-star | 其他记忆方案 |
+| 对比维度 | cdx-brain | 其他记忆方案 |
 |---------|:-------:|:----------:|
 | MCP 依赖 | ❌ 零 | ✅ 需要 |
 

@@ -1,4 +1,4 @@
-"""Tests for cc-star installer."""
+"""Tests for cdx-brain installer."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cc_star.config import ConfigManager
-from cc_star.installer import (
+from cdx_brain.config import ConfigManager
+from cdx_brain.installer import (
     HOOK_EVENTS,
     TemplateRenderer,
     _build_hook_config,
@@ -29,14 +29,14 @@ class TestTemplateRenderer:
         renderer = TemplateRenderer(tmp_template_dir)
         vars = {
             "agent_name": "test-agent",
-            "cache_path": "/tmp/.cc-star/data/cache.db",
+            "cache_path": "/tmp/.cdx-brain/data/cache.db",
             "ov_url": "http://localhost:1933",
             "ov_enabled": "True",
             "max_inject": "5",
-            "tags": '["claude-code"]',
-            "data_dir": "/tmp/.cc-star/data",
-            "sessions_file": "/tmp/.cc-star/data/sessions.jsonl",
-            "compact_state_file": "/tmp/.cc-star/data/compact_state.json",
+            "tags": '["cdx-brain"]',
+            "data_dir": "/tmp/.cdx-brain/data",
+            "sessions_file": "/tmp/.cdx-brain/data/sessions.jsonl",
+            "compact_state_file": "/tmp/.cdx-brain/data/compact_state.json",
             "memory_path": "",
             "status_path": "",
             "snapshot_path": "",
@@ -44,7 +44,7 @@ class TestTemplateRenderer:
         }
         result = renderer.render("test_hook.py", vars)
         assert "test-agent" in result
-        assert "/tmp/.cc-star/data/cache.db" in result
+        assert "/tmp/.cdx-brain/data/cache.db" in result
 
     def test_render_all_vars_substituted(self, tmp_template_dir):
         """Test that all template variables are substituted (no remaining $var)."""
@@ -55,7 +55,7 @@ class TestTemplateRenderer:
             "ov_url": "",
             "ov_enabled": "False",
             "max_inject": "3",
-            "tags": '["cc-star"]',
+            "tags": '["cdx-brain"]',
             "data_dir": "/d",
             "sessions_file": "/s.jsonl",
             "compact_state_file": "/c.json",
@@ -195,8 +195,8 @@ class TestFindSettings:
     def test_find_creates_local_when_no_settings(self, tmp_path):
         """Test that settings.local.json is created when no settings exist."""
         with (
-            patch("cc_star.installer.Path.cwd", return_value=tmp_path),
-            patch("cc_star.installer.Path.home", return_value=tmp_path),
+            patch("cdx_brain.installer.Path.cwd", return_value=tmp_path),
+            patch("cdx_brain.installer.Path.home", return_value=tmp_path),
         ):
             settings_path, is_local = _find_settings_target()
             assert settings_path.name == "settings.local.json"
@@ -210,8 +210,8 @@ class TestFindSettings:
         settings_file.write_text(json.dumps({"hooks": {"Stop": []}}), encoding="utf-8")
 
         with (
-            patch("cc_star.installer.Path.home", return_value=tmp_path),
-            patch("cc_star.installer.Path.cwd", return_value=tmp_path),
+            patch("cdx_brain.installer.Path.home", return_value=tmp_path),
+            patch("cdx_brain.installer.Path.cwd", return_value=tmp_path),
         ):
             settings_path, is_local = _find_settings_target()
             assert settings_path == settings_file
@@ -225,8 +225,8 @@ class TestFindSettings:
         settings_file.write_text(json.dumps({"skey": "sval"}), encoding="utf-8")
 
         with (
-            patch("cc_star.installer.Path.home", return_value=tmp_path),
-            patch("cc_star.installer.Path.cwd", return_value=tmp_path),
+            patch("cdx_brain.installer.Path.home", return_value=tmp_path),
+            patch("cdx_brain.installer.Path.cwd", return_value=tmp_path),
         ):
             settings_path, is_local = _find_settings_target()
             assert settings_path == settings_file
@@ -239,15 +239,15 @@ class TestTemplateVars:
     def test_get_template_vars_defaults(self):
         """Test template vars with default config."""
         config = {
-            "agent": {"name": "assistant", "tags": ["claude-code"]},
-            "storage": {"path": "~/.cc-star/data"},
+            "agent": {"name": "assistant", "tags": ["cdx-brain"]},
+            "storage": {"path": "~/.cdx-brain/data"},
             "memory": {"max_inject": 5, "memory_path": "", "status_path": "", "snapshot_path": ""},
             "ov": {"enabled": False, "url": "", "sync_batch": 50},
             "hooks": {},
         }
         vars = _get_template_vars(config)
         assert vars["agent_name"] == "assistant"
-        assert vars["tags"] == '["claude-code"]'
+        assert vars["tags"] == '["cdx-brain"]'
         assert vars["ov_enabled"] == "False"
         assert vars["max_inject"] == "5"
         assert vars["sync_batch"] == "50"
@@ -255,7 +255,7 @@ class TestTemplateVars:
     def test_get_template_vars_ov_enabled(self):
         """Test template vars with OV enabled."""
         config = {
-            "agent": {"name": "my-agent", "tags": ["claude-code", "custom"]},
+            "agent": {"name": "my-agent", "tags": ["cdx-brain", "custom"]},
             "storage": {"path": "/custom/path"},
             "memory": {"max_inject": 10, "memory_path": "", "status_path": "", "snapshot_path": ""},
             "ov": {"enabled": True, "url": "http://ov:1933", "sync_batch": 100},

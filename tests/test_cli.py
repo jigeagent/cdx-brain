@@ -1,4 +1,4 @@
-"""Tests for cc-star CLI commands."""
+"""Tests for cdx-brain CLI commands."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cc_star import __version__
-from cc_star.cli import cmd_config, cmd_init, cmd_search, cmd_status
+from cdx_brain.cli import cmd_config, cmd_init, cmd_search, cmd_status
 
 
 class TestCmdConfig:
@@ -23,11 +23,11 @@ class TestCmdConfig:
         cfg_path = tmp_config_dir / "config.yaml"
         cfg_path.write_text("agent:\n  name: test-agent\n", encoding="utf-8")
 
-        with patch("cc_star.cli._get_config_manager") as mock_mgr:
+        with patch("cdx_brain.cli._get_config_manager") as mock_mgr:
             mgr = MagicMock()
             mgr.config_path.parent = tmp_config_dir
             mgr.load.return_value = {
-                "agent": {"name": "test-agent", "tags": ["claude-code"]},
+                "agent": {"name": "test-agent", "tags": ["cdx-brain"]},
                 "storage": {"path": str(tmp_config_dir / "data")},
                 "memory": {"max_inject": 5},
                 "ov": {"enabled": False, "url": "", "sync_batch": 50},
@@ -44,7 +44,7 @@ class TestCmdConfig:
 
     def test_config_get_key(self, tmp_config_dir, capsys):
         """Test getting a single config key."""
-        with patch("cc_star.cli._get_config_manager") as mock_mgr:
+        with patch("cdx_brain.cli._get_config_manager") as mock_mgr:
             mgr = MagicMock()
             mgr.get.return_value = "assistant"
             mock_mgr.return_value = mgr
@@ -58,12 +58,12 @@ class TestCmdConfig:
 
     def test_config_set_key(self, tmp_config_dir, capsys):
         """Test setting a config key."""
-        with patch("cc_star.cli._get_config_manager") as mock_mgr:
+        with patch("cdx_brain.cli._get_config_manager") as mock_mgr:
             mgr = MagicMock()
             mock_mgr.return_value = mgr
 
             # Also patch installer for hooks re-registration
-            with patch("cc_star.cli.HookInstaller") as mock_installer:
+            with patch("cdx_brain.cli.HookInstaller") as mock_installer:
                 args = MagicMock()
                 args.key = "agent.name"
                 args.value = "new-agent"
@@ -74,7 +74,7 @@ class TestCmdConfig:
 
     def test_config_unknown_key(self, capsys):
         """Test getting an unknown key returns error."""
-        with patch("cc_star.cli._get_config_manager") as mock_mgr:
+        with patch("cdx_brain.cli._get_config_manager") as mock_mgr:
             mgr = MagicMock()
             mgr.get.return_value = None
             mock_mgr.return_value = mgr
@@ -95,7 +95,7 @@ class TestCmdInit:
         config_dir = tmp_config_dir
         config_dir.mkdir(parents=True, exist_ok=True)
 
-        with patch("cc_star.cli._get_config_manager") as mock_mgr:
+        with patch("cdx_brain.cli._get_config_manager") as mock_mgr:
             mgr = MagicMock()
             mgr.config_path.parent = config_dir
             mock_mgr.return_value = mgr
@@ -115,7 +115,7 @@ class TestCmdSearch:
 
     def test_search_no_cache(self, tmp_config_dir, capsys):
         """Test search when cache.db doesn't exist."""
-        with patch("cc_star.cli._get_config_manager") as mock_mgr:
+        with patch("cdx_brain.cli._get_config_manager") as mock_mgr:
             mgr = MagicMock()
             mgr.data_dir = tmp_config_dir
             mock_mgr.return_value = mgr
@@ -135,7 +135,7 @@ class TestCmdStatus:
 
     def test_status_no_cache(self, tmp_config_dir, capsys):
         """Test status when cache.db doesn't exist."""
-        with patch("cc_star.cli._get_config_manager") as mock_mgr:
+        with patch("cdx_brain.cli._get_config_manager") as mock_mgr:
             mgr = MagicMock()
             mgr.data_dir = tmp_config_dir
             mgr.load.return_value = {
@@ -154,4 +154,4 @@ class TestCmdStatus:
 @pytest.fixture
 def tmp_config_dir(tmp_path):
     """Create a temporary config directory."""
-    return tmp_path / ".cc-star"
+    return tmp_path / ".cdx-brain"
