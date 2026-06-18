@@ -301,12 +301,12 @@ def _score_trace(user_content: str, assistant_content: str) -> float:
     conversation_bonus = min(has_natural_lang * 1.0, 2.0) + (0.5 if has_chinese else 0.0)  # reduced cap
 
     # ── Base score: 2-6 based on length ──
-    length_score = min(max((length / 500) * 3, 2.0), 6.0)
+    length_score = min(max((length / 500) * 3, 1.0), 4.0)
 
     # ── Keyword density bonus: up to +4 ──
     text_lower = combined.lower()
     kw_hits = sum(1 for kw in PROMOTE_KEYWORDS if kw.lower() in text_lower)
-    keyword_bonus = min(kw_hits * 0.5, 2.5)  # reduced cap: avoid 10.0 saturation
+    keyword_bonus = min(kw_hits * 0.5, 2.0)  # headroom for diversity penalty
 
     score = length_score + keyword_bonus + conversation_bonus - metadata_penalty - pattern_penalty
     return round(max(min(score, 10.0), 0.0), 2)
@@ -497,7 +497,7 @@ def promote_hot_traces(dry_run: bool = False, quick: bool = False) -> dict[str, 
 
             # Gate evaluation
             if GATE_ENABLED:
-                soft_score = compute_soft_score(combined, existing_contents)
+                soft_score = 10.0 - compute_soft_score(combined, existing_contents)  # invert: penalty for similarity
                 gate_result = evaluate_gate(
                     candidate_id=t.id,
                     candidate_hard=hard_score,
