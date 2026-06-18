@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cc-star-codex"
+name = "cc-star"
 version = "0.4.1"
 description = "Codex class brain memory system — three-tier memory architecture — SQLite+FTS5 hot storage, L1→L2→L3 cognitive pipeline (policy induction, skill crystallization, world model), optional OpenViking cold sync, and built-in viewer"
 readme = "README.md"
