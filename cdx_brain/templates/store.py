@@ -372,7 +372,7 @@ def main() -> None:
         sys.exit(0)
 
     # tags: 只用 chat/decision/bugfix 三个类别，不自定义
-    $tags
+    tags = $tags
     trace = TraceRow(
         id=new_id(),
         session_id=session_id or "unknown",

@@ -41,3 +41,14 @@ pip install cdx-brain && cdx-brain init
 ## 许可证
 
 AGPL-3.0
+
+## v0.5.0 认知管线就绪
+
+```
+L1 Capture → Reward → L2 Induction → L3 World Model → Skill Crystallization
+```
+
+- 每轮对话：`process_trace()` 实时处理
+- 会话结束：`process_session_end()` 全流程触发
+- 管线状态持久化到 `~/.cdx-brain/data/pipeline_state.json`
+- 认知产物(policies + concepts)通过 RRF 注入 additionalContext

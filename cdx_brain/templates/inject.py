@@ -205,6 +205,54 @@ def search_codex_extensions(query: str, limit: int = 5) -> list[dict]:
 # ── Source 3: OpenViking ──
 
 
+
+
+# -- Source: Cognitive pipeline artifacts --
+
+
+def search_cognitive(query, limit = 3):
+    """Search pipeline state for matching policies and concepts."""
+    import json
+    from pathlib import Path
+    state_path = Path(CACHE_PATH).parent / "pipeline_state.json"
+    if not state_path.is_file():
+        return []
+    try:
+        state = json.loads(state_path.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    q_tokens = set(re.findall(r"[a-z0-9_\u4e00-\u9fff\-]{2,}", query.lower()))
+    if not q_tokens:
+        return []
+    results = []
+    for p in state.get("policies", []):
+        name = p.get("name", "")
+        desc = p.get("description", "")
+        trigger = p.get("trigger_pattern", "")
+        combined = (name + " " + desc + " " + trigger).lower()
+        hits = sum(1 for t in q_tokens if t in combined)
+        if hits > 0:
+            results.append({"id": "policy:" + p.get("id", name), "session_id": name,
+                "user_content": "[Policy] " + name + "\n" + desc[:200],
+                "assistant_content": "", "reward": hits / max(len(q_tokens), 1),
+                "tags": ["cognitive", "policy"], "created_at": p.get("created_at", ""),
+                "source": "cognitive", "score": hits / max(len(q_tokens), 1)})
+    wm = state.get("world_model", {})
+    for cid, cdata in wm.get("concepts", {}).items():
+        label = cdata.get("label", "")
+        desc = cdata.get("description", "")
+        combined = (label + " " + desc).lower()
+        hits = sum(1 for t in q_tokens if t in combined)
+        if hits > 0:
+            results.append({"id": "concept:" + cid, "session_id": label,
+                "user_content": "[Concept] " + label + "\n" + desc[:200],
+                "assistant_content": "", "reward": hits / max(len(q_tokens), 1),
+                "tags": ["cognitive", "concept"], "created_at": cdata.get("created_at", ""),
+                "source": "cognitive", "score": hits / max(len(q_tokens), 1)})
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return results[:limit]
+
+
 def search_ov(query: str, limit: int = 8) -> list[dict]:
     """Search OpenViking semantic."""
     if not OV_URL or not OV_ENABLED:

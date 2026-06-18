@@ -110,6 +110,35 @@ def save_session_info(info: dict) -> None:
         pass
 
 
+
+# -- Cognitive Pipeline: full processing at session end --
+
+
+def _run_pipeline(all_traces, cache_path):
+    """Load pipeline state, run session_end processing, save state."""
+    if not all_traces:
+        return {}
+    try:
+        from cdx_brain.memos.pipeline import CognitivePipeline
+        pipe = CognitivePipeline.load_state(str(Path(cache_path).parent))
+        for t in all_traces:
+            pipe.process_trace(t)
+        pipe.process_session_end(all_traces)
+        pipe.save_state(str(Path(cache_path).parent))
+        stats = pipe.get_stats()
+        sys.stderr.write(f"[summary] pipeline: "
+            f"{stats.get('policies', 0)} policies, "
+            f"{stats.get('skills', 0)} skills, "
+            f"{stats.get('concepts', 0)} concepts, "
+            f"sessions={stats.get('traces_processed', 0)}\n")
+        return stats
+    except Exception as e:
+        import sys, traceback
+        sys.stderr.write(f"[summary] pipeline error: {e}\n")
+        traceback.print_exc()
+        return {}
+
+
 def sync_unsynced_traces(repo: TraceRepository) -> tuple[int, int]:
     """Batch sync unsynced traces to OpenViking."""
     if not OV_URL or not OV_ENABLED:
@@ -171,11 +200,6 @@ def main() -> None:
         print(f"[summary] sync error: {e}", file=sys.stderr)
 
 
-
-    if all_traces:
-        stats = _run_pipeline(all_traces, CACHE_PATH)
-        if stats:
-            import sys; sys.stderr.write(f"[summary] pipeline: {stats.get(\"policies\", 0)} policies, {stats.get(\"skills\", 0)} skills\\n")
 
 if __name__ == "__main__":
     main()
