@@ -286,7 +286,44 @@ class CognitivePipeline:
         self.skill_crystallizer = SkillCrystallizer(self._config.skill)
 
 
-    # -- State Persistence ----------------------------------
+            # Sync cognitive state to OV (best-effort, no config needed)
+        try:
+            import os
+            ov_url = os.environ.get("CDX_BRAIN_OV_URL", "")
+            if ov_url:
+                from cdx_brain.federation.sync import sync_pipeline_to_ov
+                sync_state = {
+                    "policies": [p.to_dict() for p in self._policies],
+                    "skills": [s.to_dict() for s in self._skills],
+                    "world_model": self.world_model.to_dict(),
+                }
+                counts = sync_pipeline_to_ov(sync_state, ov_url)
+                if any(counts.values()):
+                    logger.info("synced to OV: %s", counts)
+        except Exception:
+            pass
+
+# -- State Persistence ----------------------------------
+
+    
+
+    def sync_to_ov(self, ov_url: str = "", agent: str = "comsam") -> dict:
+        """Sync pipeline cognitive state to OV (best-effort)."""
+        if not ov_url:
+            return {}
+        try:
+            from cdx_brain.federation.sync import sync_pipeline_to_ov
+            state = {
+                "policies": [p.to_dict() for p in self._policies],
+                "skills": [s.to_dict() for s in self._skills],
+                "world_model": self.world_model.to_dict(),
+            }
+            return sync_pipeline_to_ov(state, ov_url, agent)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("sync_to_ov failed", exc_info=True)
+            return {}
+
 
     def save_state(self, config_dir: str = "") -> None:
         """Persist pipeline state (policies, skills, world model) to JSON."""

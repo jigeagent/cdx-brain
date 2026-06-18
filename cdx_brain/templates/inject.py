@@ -318,11 +318,12 @@ def main() -> None:
     native_results = search_native(prompt, limit=MAX_INJECT_NATIVE)
     codex_results = search_codex_extensions(prompt, limit=MAX_INJECT_NATIVE)
     ov_results = search_ov(prompt, limit=8)
+    federated_results = search_federated(prompt, limit=3)
     cognitive_results = search_cognitive(prompt, limit=3)
     elapsed = time.time() - t0
 
     # Merge via RRF
-    merged = rrf_merge([local_results, native_results, codex_results, ov_results, cognitive_results], k=60)
+    merged = rrf_merge([local_results, native_results, codex_results, ov_results, cognitive_results, federated_results], k=60)
     merged = merged[:MAX_MEMORIES]
 
     if not merged:

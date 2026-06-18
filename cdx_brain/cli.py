@@ -461,6 +461,89 @@ def cmd_decay(args: argparse.Namespace) -> None:
     print()
 
 
+
+
+def cmd_federate(args: argparse.Namespace) -> None:
+    """Run federated consensus."""
+    cfg_mgr = _get_config_manager()
+    ov_url = args.ov_url or cfg_mgr.get("ov.url", "")
+    if not ov_url:
+        print("  OpenViking not configured. Use --ov-url or set ov.url in config.")
+        return
+
+    agent = cfg_mgr.get("agent.name", "comsam")
+    state_path = str(cfg_mgr.data_dir / "pipeline_state.json")
+
+    # Step 1: Sync local pipeline state to OV
+    if not args.consensus_only:
+        from cdx_brain.federation.sync import sync_pipeline_state_file
+        counts = sync_pipeline_state_file(state_path, ov_url, agent, dry_run=args.dry_run)
+        print()
+        print(f"  Synced to OV ({agent}):")
+        for k, v in counts.items():
+            if v:
+                print(f"    {k}: {v}")
+        if not any(counts.values()):
+            print(f"    (no new data to sync)")
+
+    # Step 2: Search OV for cognitive data from all agents
+    from cdx_brain.ov.client import OpenVikingClient
+    client = OpenVikingClient(base_url=ov_url, timeout=5.0)
+    print()
+    print("  Searching OV for cognitive data...")
+
+    # Search for policies
+    policy_results = client.search_find(query="cognitive policy", k=20)
+    concept_results = client.search_find(query="cognitive concept", k=20)
+
+    from cdx_brain.federation.consensus import find_candidates, run_consensus
+    all_candidates = find_candidates(policy_results + concept_results)
+
+    agents_found = set(c.get("_agent", "?") for c in all_candidates)
+    print(f"    Found {len(all_candidates)} cognitive items from agents: {agents_found}")
+
+    if not all_candidates:
+        print("    (no other agents have cognitive data yet)")
+        return
+
+    # Step 3: Run consensus
+    import json
+    from pathlib import Path
+    state = {}
+    if Path(state_path).is_file():
+        state = json.loads(Path(state_path).read_text("utf-8"))
+
+    consensus = run_consensus(state, all_candidates)
+    if consensus["merges"]:
+        print(f"  Merges: {len(consensus['merges'])}")
+        for m in consensus["merges"]:
+            print(f"    + {m['local_name'][:40]} <- {m['remote_agent']} (sim={m['similarity']:.2f}, method={m['method']})")
+    if consensus["pending_reviews"]:
+        print(f"  Pending reviews: {len(consensus['pending_reviews'])}")
+        for p in consensus["pending_reviews"]:
+            print(f"    ? {p['local_name'][:40]} vs {p['remote_agent']} (sim={p['similarity']:.2f})")
+
+    # Step 4: Conflict detection
+    from cdx_brain.federation.conflict import detect_conflicts, format_conflict_report
+    local_triples = list(state.get("world_model", {}).get("triples", {}).values())
+    remote_triples = {}
+    for r in all_candidates:
+        agent_n = r.get("_agent", "")
+        if agent_n != agent and "/triples/" in r.get("id", ""):
+            tdata = r.get("user_content", {})
+            if isinstance(tdata, dict):
+                remote_triples.setdefault(agent_n, []).append(tdata)
+
+    conflicts = detect_conflicts(local_triples, remote_triples)
+    if conflicts:
+        print(f"  Conflicts: {len(conflicts)}")
+        print(f"    {format_conflict_report(conflicts)}")
+    else:
+        print(f"  Conflicts: none")
+
+    print()
+
+
 def main() -> None:
     """Entry point for cdx-brain CLI."""
     parser = argparse.ArgumentParser(
@@ -503,6 +586,16 @@ def main() -> None:
 
     # decay
     decay_p = sub.add_parser("decay", help="Run memory decay: cold storage + policy aging + concept pruning")
+    
+
+    # federate
+    fed_p = sub.add_parser("federate", help="Run federated consensus: OV sync + merge + conflict detect")
+    fed_p.add_argument("--dry-run", "-n", action="store_true",
+                       help="Preview without making changes")
+    fed_p.add_argument("--ov-url", default="",
+                       help="OpenViking URL (default: from config)")
+    fed_p.add_argument("--consensus-only", action="store_true",
+                       help="Skip OV sync, only run consensus + conflict detection")
     decay_p.add_argument("--dry-run", "-n", action="store_true",
                          help="Preview without making changes")
     decay_p.add_argument("--cold-db", default="",

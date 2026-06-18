@@ -27,6 +27,9 @@ from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
 from cdx_brain.cache.traces import TraceRepository
 from cdx_brain.cache.decay import run_decay, format_decay_report
+from cdx_brain.federation.sync import sync_pipeline_state_file
+from cdx_brain.federation.consensus import run_consensus, find_candidates
+from cdx_brain.federation.conflict import detect_conflicts, format_conflict_report
 from cdx_brain.config import ConfigManager
 from cdx_brain.promote_gate import (
     evaluate_gate, load_gate_state, save_gate_state, update_gate_state,
