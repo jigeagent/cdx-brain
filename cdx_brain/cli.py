@@ -310,6 +310,15 @@ def cmd_promote(args: argparse.Namespace) -> None:
     """Run memory maintenance: cache limit, dedup, hot promote."""
     from cdx_brain.promote import run_maintenance
     results = run_maintenance(dry_run=args.dry_run or False)
+
+    # ── Baidu Netdisk sync (best-effort) ─────
+    if not args.dry_run:
+        try:
+            from cdx_brain.sync.bdpan import sync_all_cognitive
+            sync_all_cognitive()
+        except Exception:
+            pass
+
     json.dump(results, sys.stdout, indent=2, ensure_ascii=False)
 
 

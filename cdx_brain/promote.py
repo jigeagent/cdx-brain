@@ -809,6 +809,15 @@ def run_maintenance(dry_run: bool = False) -> dict[str, Any]:
         except Exception as exc:
             sys.stderr.write(f"[promote] decay error: {exc}\n")
 
+    # ── Baidu Netdisk sync (best-effort) ─────
+    if not dry_run:
+        try:
+            from cdx_brain.sync.bdpan import sync_all_cognitive
+            sync_all_cognitive()
+        except Exception:
+            pass
+
+
 
     return results
 
@@ -831,6 +840,14 @@ def main() -> None:
         results = promote_hot_traces(dry_run=dry_run, quick=True)
     else:
         results = run_maintenance(dry_run=dry_run)
+
+    # ── Baidu Netdisk sync ─────
+    if not dry_run:
+        try:
+            from cdx_brain.sync.bdpan import sync_all_cognitive
+            sync_all_cognitive()
+        except Exception:
+            pass
 
     json.dump(results, sys.stdout, indent=2, ensure_ascii=False)
 

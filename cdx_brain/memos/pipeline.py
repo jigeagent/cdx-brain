@@ -339,7 +339,14 @@ class CognitivePipeline:
             "skills": [s.to_dict() for s in self._skills],
             "world_model": self.world_model.to_dict(),
         }
-        path.write_text(json.dumps(state, ensure_ascii=False, default=str), encoding="utf-8")
+        path.write_text(json.dumps(state, ensure_ascii=False, default=str), encoding="utf-8")
+        # ── Baidu Netdisk sync (best-effort) ─────
+        try:
+            from cdx_brain.sync.bdpan import sync_pipeline_state
+            sync_pipeline_state()
+        except Exception:
+            pass
+
 
     @classmethod
     def load_state(

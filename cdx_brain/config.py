@@ -48,6 +48,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "timeout_compact_save": 5,
         "timeout_compact_restore": 10,
     },
+    "sync": {
+        "bdpan": {
+            "enabled": True,
+            "remote_base": "/apps/hermes/shared/{agent}",
+        },
+    },
 }
 
 
@@ -151,3 +157,4 @@ class ConfigManager:
 
         self.save(self._data)
         return self._data
+
