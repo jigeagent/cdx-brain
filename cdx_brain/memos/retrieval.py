@@ -87,4 +87,51 @@ def format_results(results: list[dict[str, Any]]) -> str:
         if source:
             lines[-1] += f" [{source}]"
 
+
+def retrieve_graph_diffusion(
+    seed_ids: list[str],
+    max_depth: int = 2,
+    max_results: int = 8,
+) -> list[dict[str, Any]]:
+    """Tier 5: Graph-diffusion retrieval from seed node IDs.
+
+    Takes seed IDs (from FTS5/embedding hits) and walks the triples
+    graph to discover related nodes.
+
+    Args:
+        seed_ids: Node IDs to start diffusion from.
+        max_depth: BFS depth (default 2).
+        max_results: Max results to return.
+
+    Returns:
+        List of graph-diffused results with path descriptions.
+    """
+    if not seed_ids:
+        return []
+
+    try:
+        from pathlib import Path
+        import sqlite3
+
+        cache_path = Path.home() / ".cdx-brain" / "data" / "cache.db"
+        if not cache_path.is_file():
+            return []
+
+        conn = sqlite3.connect(str(cache_path))
+        try:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='triples'"
+            ).fetchone()
+            if not row:
+                return []
+
+            from cdx_brain.retrieval.graph_diffusion import GraphDiffusion
+            gd = GraphDiffusion(conn)
+            return gd.diffuse(seed_ids=seed_ids, max_depth=max_depth, max_results=max_results)
+        finally:
+            conn.close()
+    except Exception:
+        logger.warning("graph diffusion retrieval failed", exc_info=True)
+        return []
+
     return "\n".join(lines)
