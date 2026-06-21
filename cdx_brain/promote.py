@@ -450,6 +450,16 @@ def promote_hot_traces(dry_run: bool = False, quick: bool = False) -> dict[str, 
             recent = repo.list_recent(limit=100)
             all_traces.extend(recent)
 
+        # Load existing native memory for diversity penalty
+        existing_contents = []
+        native_dir_for_dp = Path(_native_memory_path())
+        if GATE_METRIC in ("soft", "mixed") and native_dir_for_dp.is_dir():
+            for f in native_dir_for_dp.glob("*.md"):
+                try:
+                    existing_contents.append(f.read_text("utf-8"))
+                except OSError:
+                    continue
+
         # Dedup by id and score
         seen = {}
         for t in all_traces:
@@ -480,14 +490,7 @@ def promote_hot_traces(dry_run: bool = False, quick: bool = False) -> dict[str, 
         native_dir = Path(mem_path)
         native_dir.mkdir(parents=True, exist_ok=True)
 
-        # Load existing native memory contents for soft score
-        existing_contents = []
-        if GATE_METRIC in ("soft", "mixed") and native_dir.is_dir():
-            for f in native_dir.glob("*.md"):
-                try:
-                    existing_contents.append(f.read_text("utf-8"))
-                except OSError:
-                    continue
+        # existing_contents already loaded above
 
         for t, hard_score in candidates:
             combined = (t.user_content or "") + " " + (t.assistant_content or "")
@@ -776,8 +779,11 @@ def check_startup_health() -> dict[str, Any]:
 # ── Maintenance runner ──
 
 
-def run_maintenance(dry_run: bool = False) -> dict[str, Any]:
+def run_maintenance(dry_run: bool = False, compact: bool = True) -> dict[str, Any]:
     """Run full maintenance cycle: cache limit → dedup → promote → trim."""
+    CACHE_PATH = _cachedb_path()
+    DECAY_ENABLED = _cfg("decay.enabled", True)
+    DECAY_COLD_PATH = _cfg("decay.cold_db_path", "") or str(Path(CACHE_PATH).parent / "cold.db")
     results = {
         "cache_limit": enforce_cache_limit(dry_run=dry_run),
         "native_dedup": dedup_native_memory(dry_run=dry_run),
@@ -797,7 +803,7 @@ def run_maintenance(dry_run: bool = False) -> dict[str, Any]:
                 dry_run=dry_run,
                 pipeline_state_path=str(Path(CACHE_PATH).parent / "pipeline_state.json"),
             )
-            result["decay"] = {
+            results["decay"] = {
                 "traces_cold": dr.traces_cold,
                 "traces_archived": dr.traces_archived,
                 "policies_decayed": dr.policies_decayed,

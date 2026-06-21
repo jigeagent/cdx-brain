@@ -7,13 +7,6 @@ Config cascade: env var → config.yaml → template-baked default.
 """
 from __future__ import annotations
 
-import sys
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
-
 import hashlib
 import json
 import os
@@ -40,11 +33,11 @@ try:
 except Exception:
     _GET = lambda k, d=None: d
 
-CACHE_PATH = os.path.expanduser(os.environ.get("$cache_path", "C:/Users/Administrator/.cc-star/data/cache.db"))
-OV_URL = os.environ.get("CDX_BRAIN_OV_URL", _GET("ov.url", "$ov_url"))
-OV_ENABLED = os.environ.get("CDX_BRAIN_OV_ENABLED", "$ov_enabled") in ("1", "true", "True")
+CACHE_PATH = os.path.expanduser(os.environ.get("CC_STAR_CACHE_PATH", "C:/Users/Administrator/.cc-star/data/cache.db"))
+OV_URL = os.environ.get("CC_STAR_OV_URL", _GET("ov.url", "http://127.0.0.1:1933"))
+OV_ENABLED = os.environ.get("CC_STAR_OV_ENABLED", "True") in ("1", "true", "True")
 NATIVE_MEMORY_PATH = os.path.expanduser(
-    os.environ.get("CDX_BRAIN_MEMORY_PATH", _GET("memory.memory_path", "$memory_path"))
+    os.environ.get("CC_STAR_MEMORY_PATH", _GET("memory.memory_path", "C:/Users/Administrator/.claude/memory"))
 )
 if not NATIVE_MEMORY_PATH:
     _ch = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
@@ -107,32 +100,63 @@ def read_transcript_safe(path: str, max_retries: int = MAX_RETRIES) -> list[dict
 
 
 def extract_turn(entries: list[dict]) -> tuple[str, str, str, str] | None:
-    """Extract last user/assistant turn from parsed transcript entries."""
+    """Extract last user/assistant turn from Codex transcript entries.
+
+    Codex v0.141 format: session_meta, response_item with payload.type/role/content.
+    Also supports legacy cdx-brain formats as fallback.
+    """
     user_content = ""
     assistant_content = ""
     session_id = ""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     for entry in entries:
-        if entry.get("type") == "system" and entry.get("subtype") == "session":
-            session_id = entry.get("session_id", entry.get("id", ""))
-
         ts = entry.get("timestamp") or entry.get("created_at", "")
         if ts:
             timestamp = ts
 
-        if entry.get("type") == "user":
+        entry_type = entry.get("type", "")
+
+        # Codex v0.141: session_meta -> payload.id
+        if entry_type == "session_meta":
+            session_id = entry.get("payload", {}).get("id", "")
+            continue
+
+        # Codex v0.141: response_item -> payload.type=message, payload.role=user/assistant
+        if entry_type == "response_item":
+            payload = entry.get("payload", {})
+            if payload.get("type") != "message":
+                continue
+            role = payload.get("role", "")
+            content_list = payload.get("content", [])
+            if not content_list:
+                continue
+            text = content_list[0].get("text", "")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if role == "user":
+                user_content = text.strip()
+            elif role == "assistant":
+                assistant_content = text.strip()
+            continue
+
+        # Legacy: system + subtype=session
+        if entry_type == "system" and entry.get("subtype") == "session":
+            session_id = entry.get("session_id", entry.get("id", ""))
+            continue
+
+        # Legacy: top-level user/assistant with message.content
+        if entry_type in ("user", "assistant"):
             msg = entry.get("message", {})
             content = msg.get("content", "")
             if isinstance(content, str) and content.strip():
-                user_content = content.strip()
+                if entry_type == "user":
+                    user_content = content.strip()
+                else:
+                    assistant_content = content.strip()
+            continue
 
-        if entry.get("type") == "assistant":
-            msg = entry.get("message", {})
-            content = msg.get("content", "")
-            if isinstance(content, str) and content.strip():
-                assistant_content = content.strip()
-
+        # Legacy: flat role/content
         if "role" in entry and "content" in entry:
             content = entry["content"]
             if isinstance(content, str) and content.strip():
@@ -143,8 +167,8 @@ def extract_turn(entries: list[dict]) -> tuple[str, str, str, str] | None:
 
     if not user_content and not assistant_content:
         return None
-
     return user_content, assistant_content, session_id, timestamp
+
 
 
 def try_sync_ov(trace: TraceRow) -> bool:
@@ -372,7 +396,7 @@ def main() -> None:
         sys.exit(0)
 
     # tags: 只用 chat/decision/bugfix 三个类别，不自定义
-    tags = $tags
+    tags = ["chat"]
     trace = TraceRow(
         id=new_id(),
         session_id=session_id or "unknown",
@@ -408,16 +432,6 @@ def main() -> None:
 
     # Memory promotion (best-effort, after main storage)
     _do_promote(user_content, assistant_content)
-
-
-
-    try:
-        from cdx_brain.memos.pipeline import CognitivePipeline
-        pipe = CognitivePipeline.load_state(str(Path(CACHE_PATH).parent))
-        pipe.process_trace(trace)
-        pipe.save_state(str(Path(CACHE_PATH).parent))
-    except Exception:
-        pass
 
 
 if __name__ == "__main__":

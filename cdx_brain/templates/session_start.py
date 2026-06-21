@@ -6,13 +6,6 @@ Checks OV health + reads last session summary.
 """
 from __future__ import annotations
 
-import sys
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
-
 import json
 import os
 import sys
@@ -64,6 +57,16 @@ def main() -> None:
     last = last_session_summary()
     if last:
         msg_parts.append(last)
+
+    # Write health heartbeat
+    try:
+        health_file = SESSIONS_FILE.parent / ".cc_star_health"
+        health_file.write_text(
+            datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            encoding="utf-8"
+        )
+    except OSError:
+        pass
 
     output = {"systemMessage": " | ".join(msg_parts)}
     json.dump(output, sys.stdout, ensure_ascii=False)

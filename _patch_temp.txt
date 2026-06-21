@@ -1,0 +1,19 @@
+        except Exception:
+            pass
+
+        # ── Relation Extraction ──────────────────────
+        try:
+            conn = self._get_db_connection()
+            if conn is not None:
+                from cdx_brain.retrieval.extractor import RelationExtractor
+                policies_dict = [p.to_dict() for p in self._policies]
+                concepts_dict = [c.to_dict() for c in self.world_model.list_concepts()]
+                extractor = RelationExtractor(conn)
+                new_relations = extractor.extract(policies=policies_dict, concepts=concepts_dict)
+                results["new_relations"] = new_relations
+                results["stage"]["relation_extraction"] = {"count": len(new_relations)}
+                conn.close()
+        except Exception:
+            logger.warning("RelationExtraction failed", exc_info=True)
+
+# -- State Persistence ----------------------------------

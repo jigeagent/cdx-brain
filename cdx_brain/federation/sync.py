@@ -122,6 +122,36 @@ def sync_pipeline_to_ov(
         except Exception:
             pass
 
+    # Relations from triples table
+    try:
+        from pathlib import Path
+        import sqlite3
+        cache_path = Path.home() / ".cdx-brain" / "data" / "cache.db"
+        if cache_path.is_file():
+            conn = sqlite3.connect(str(cache_path))
+            conn.row_factory = sqlite3.Row
+            rels = conn.execute("SELECT * FROM triples WHERE synced = 0 LIMIT 100").fetchall()
+            for rel in rels:
+                rid = rel["id"]
+                if not rid:
+                    continue
+                uri = f"{_COGNITIVE_BASE.format(agent=agent)}/relations/{rid}.json"
+                if dry_run:
+                    counts["relations"] = counts.get("relations", 0) + 1
+                    continue
+                try:
+                    rel_dict = dict(rel)
+                    content = json.dumps(rel_dict, ensure_ascii=False, default=str)
+                    client.content_write(uri, content, metadata={"agent": agent, "type": "relation", "synced_at": now})
+                    conn.execute("UPDATE triples SET synced = 1 WHERE id = ?", (rid,))
+                    counts["relations"] = counts.get("relations", 0) + 1
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+    except Exception:
+        pass
+
     client.close()
     return counts
 
