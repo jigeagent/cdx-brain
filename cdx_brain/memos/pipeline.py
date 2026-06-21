@@ -303,6 +303,21 @@ class CognitivePipeline:
         except Exception:
             pass
 
+        # -- Relation Extraction --
+        try:
+            conn = self._get_db_connection()
+            if conn is not None:
+                from cdx_brain.retrieval.extractor import RelationExtractor
+                policies_dict = [p.to_dict() for p in self._policies]
+                concepts_dict = [c.to_dict() for c in self.world_model.list_concepts()]
+                extractor = RelationExtractor(conn)
+                new_relations = extractor.extract(policies=policies_dict, concepts=concepts_dict)
+                results["new_relations"] = new_relations
+                results["stage"]["relation_extraction"] = {"count": len(new_relations)}
+                conn.close()
+        except Exception:
+            logger.warning("RelationExtraction failed", exc_info=True)
+
 # -- State Persistence ----------------------------------
 
     
@@ -325,6 +340,18 @@ class CognitivePipeline:
             return {}
 
 
+    def _get_db_connection(self):
+        """Get an SQLite connection to cache.db (best-effort)."""
+        try:
+            from pathlib import Path
+            import sqlite3
+            cache_path = Path.home() / ".cdx-brain" / "data" / "cache.db"
+            if cache_path.is_file():
+                return sqlite3.connect(str(cache_path))
+        except Exception:
+            pass
+        return None
+
     def save_state(self, config_dir: str = "") -> None:
         """Persist pipeline state (policies, skills, world model) to JSON."""
         import json
@@ -339,7 +366,8 @@ class CognitivePipeline:
             "skills": [s.to_dict() for s in self._skills],
             "world_model": self.world_model.to_dict(),
         }
-        path.write_text(json.dumps(state, ensure_ascii=False, default=str), encoding="utf-8")
+        path.write_text(json.dumps(state, ensure_ascii=False, default=str), encoding="utf-8")
+
         # ── Baidu Netdisk sync (best-effort) ─────
         try:
             from cdx_brain.sync.bdpan import sync_pipeline_state
