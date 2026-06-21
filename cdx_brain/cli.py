@@ -25,7 +25,7 @@ from cdx_brain.cache.traces import TraceRepository
 
 from cdx_brain import __version__
 from cdx_brain.config import ConfigManager
-from cdx_brain.installer import HookInstaller
+from cdx_brain.installer import init_memory_system
 
 
 def _get_config_manager() -> ConfigManager:
@@ -47,13 +47,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     if config_dir.is_dir() and args.force:
         print(f"  🔄 重新初始化 cdx-brain ...")
 
-    installer = HookInstaller(cfg_mgr)
-    result = installer.install(
-        agent_name=args.agent_name,
-        ov_url=args.ov_url or "",
-        non_interactive=args.non_interactive,
-        force=args.force,
-    )
+    result = init_memory_system(cfg_mgr, agent_name=args.agent_name, ov_url=args.ov_url or "")
 
     # ── 输出 ──
     print()
@@ -61,7 +55,6 @@ def cmd_init(args: argparse.Namespace) -> None:
     print(f"  ───────────────────────────────────")
     print(f"  配置目录  {result['config_dir']}")
     print(f"  数据文件  {result['cache_path']}")
-    print(f"  Hook 脚本 {result['hooks_dir']}")
     print(f"  当前身份  {result['agent_name']}")
     ov_status = f"已连接 {result['ov_url']}" if result['ov_enabled'] else "未配置"
     print(f"  OpenViking {ov_status}")
@@ -77,16 +70,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     if (config_dir / "config.yaml").is_file():
         checks.append(f"  ✓ 配置文件已写入")
 
-    # Hooks in settings.json
-    settings_path = Path.home() / ".claude" / "settings.json"
-    if settings_path.is_file():
-        try:
-            import json
-            s = json.loads(settings_path.read_text(encoding="utf-8"))
-            hook_count = sum(len(v) for v in (s.get("hooks", {}) or {}).values())
-            checks.append(f"  ✓ Claude Code hooks 已注册 ({hook_count} 事件)")
-        except Exception:
-            pass
+
 
     # OpenViking connectivity
     ov_url = result.get("ov_url", "")
@@ -122,9 +106,9 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     # ── 下一步 ──
     print(f"  ── 下一步 ──")
-    print(f"  1. 启动新的 Claude Code 会话（hooks 将在新会话生效）")
-    print(f"  2. 运行 cdx-brain doctor    全面自检")
-    print(f"  3. 运行 cdx-brain status    查看运行状态")
+    print(f"  1. 运行 cdx-brain doctor    全面自检")
+    print(f"  2. 运行 cdx-brain status    查看运行状态")
+    print(f"  3. 运行 cdx-brain promote   记忆维护（建议每周一次）")
     print(f"  4. 运行 cdx-brain promote   记忆维护（建议每周一次）")
     print(f"  5. 运行 cdx-brain search    测试记忆检索")
     print()
@@ -288,22 +272,10 @@ def cmd_config(args: argparse.Namespace) -> None:
 
     # If OV settings changed, re-render hooks
     if args.key.startswith("ov.") or args.key.startswith("agent."):
-        installer = HookInstaller(cfg_mgr)
-        config = cfg_mgr.load()
-        hooks_dir = cfg_mgr.config_path.parent / "hooks"
-        installer._register_hooks(hooks_dir, config)
-        print("Hooks re-registered with new config.")
+        pass  # Hook registration removed - cdx-brain is Codex-only
 
 
-def cmd_uninstall(args: argparse.Namespace) -> None:
-    """Remove cdx-brain hooks from Claude Code settings."""
-    cfg_mgr = _get_config_manager()
-    installer = HookInstaller(cfg_mgr)
-    if installer.uninstall():
-        print("cdx-brain hooks removed from Claude Code settings.")
-        print("To fully uninstall, also remove ~/.cdx-brain/ directory.")
-    else:
-        print("No cdx-brain hooks found in settings.")
+
 
 
 def cmd_promote(args: argparse.Namespace) -> None:
@@ -357,34 +329,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     else:
         print(f"  ⚠️ 数据库文件不存在（新装机正常，使用后会自动创建）")
 
-    # 3. Hook 脚本
-    hooks_dir = config_dir / "hooks"
-    expected = ["session_start.py", "inject.py", "store.py", "summary.py", "compact.py"]
-    if hooks_dir.is_dir():
-        present = [p.name for p in hooks_dir.glob("*.py")]
-        missing = [f for f in expected if f not in present]
-        if not missing:
-            print(f"  ✅ Hook 脚本  {len(present)}/5 齐全")
-        else:
-            print(f"  ⚠️ Hook 脚本缺失 — {missing}")
-            all_ok = False
-    else:
-        print(f"  ❌ Hook 目录缺失 — 请运行 cdx-brain init --force")
-        all_ok = False
 
-    # 4. Claude Code settings hooks
-    settings_path = Path.home() / ".claude" / "settings.json"
-    if settings_path.is_file():
-        try:
-            import json
-            s = json.loads(settings_path.read_text(encoding="utf-8"))
-            hooks = s.get("hooks", {})
-            cc_events = [e for e in hooks if hooks[e]]
-            print(f"  ✅ Claude Code {len(cc_events)}/{len(hooks)} 事件已注册 hook")
-        except Exception as e:
-            print(f"  ⚠️ 读取 settings.json 失败 — {e}")
-    else:
-        print(f"  ⚠️ Claude Code settings.json 不存在（未安装 Claude Code?）")
 
     # 5. 原生记忆
     mem_path = cfg_mgr.get("memory.memory_path")
@@ -553,11 +498,71 @@ def cmd_federate(args: argparse.Namespace) -> None:
     print()
 
 
+
+def cmd_graph(args: argparse.Namespace) -> None:
+    """Knowledge graph management."""
+    cfg_mgr = _get_config_manager()
+    """Knowledge graph management."""
+    from pathlib import Path
+    import sqlite3
+
+    data_dir = cfg_mgr.data_dir
+    cache_path = data_dir / "cache.db"
+
+    if not cache_path.is_file():
+        print("  \u26a0\ufe0f  cache.db not found. Run cdx-brain init first.")
+        return
+
+    conn = sqlite3.connect(str(cache_path))
+
+    if args.graph_command == "status":
+        from cdx_brain.retrieval.extractor import RelationExtractor
+        extractor = RelationExtractor(conn)
+        stats = extractor.get_stats()
+        print()
+        print(f"  \ud83d\udcca Knowledge Graph Status")
+        print(f"  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+        print(f"  Total edges:  {stats.get('total_edges', 0)}")
+        pred_detail = stats.get("by_predicate", {})
+        if pred_detail:
+            print(f"  By type:")
+            for p, c in pred_detail.items():
+                print(f"    {p}: {c}")
+        print(f"  Orphan subjects: {stats.get('orphan_subjects', 'N/A')}")
+        print()
+
+    elif args.graph_command == "diffuse":
+        from cdx_brain.retrieval.extractor import RelationExtractor
+        import json
+
+        state_path = data_dir / "pipeline_state.json"
+        if not state_path.is_file():
+            print("  \u26a0\ufe0f  No pipeline state to extract relations from.")
+            conn.close()
+            return
+
+        state = json.loads(state_path.read_text("utf-8"))
+        policies = state.get("policies", [])
+        wm = state.get("world_model", {})
+        concepts = list(wm.get("concepts", {}).values())
+
+        extractor = RelationExtractor(conn)
+        relations = extractor.extract(policies=policies, concepts=concepts)
+        print()
+        print(f"  \ud83d\udd17 Relation extraction complete")
+        print(f"  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+        print(f"  Policies:  {len(policies)}")
+        print(f"  Concepts:  {len(concepts)}")
+        print(f"  Relations extracted: {len(relations)}")
+        print()
+
+    conn.close()
+
 def main() -> None:
     """Entry point for cdx-brain CLI."""
     parser = argparse.ArgumentParser(
         prog="cdx-brain",
-        description="Claude Code memory upgrade kit",
+        description="cdx-brain memory system CLI",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -587,7 +592,6 @@ def main() -> None:
     config_p.add_argument("value", nargs="?", help="Config value")
 
     # uninstall
-    sub.add_parser("uninstall", help="Remove cdx-brain hooks from Claude Code settings")
 
     # promote
     promote_p = sub.add_parser("promote", help="Run memory maintenance (cache limit, dedup, hot promote)")
@@ -615,6 +619,12 @@ def main() -> None:
     # doctor
     sub.add_parser("doctor", help="全面自检：环境 + 配置 + hook + DB + OV 一次查清")
 
+    # graph
+    graph_p = sub.add_parser("graph", help="Knowledge graph: status, diffuse")
+    graph_sub = graph_p.add_subparsers(dest="graph_command", required=True)
+    graph_sub.add_parser("status", help="Show graph statistics")
+    graph_sub.add_parser("diffuse", help="Run relation extraction on existing data")
+
     args = parser.parse_args()
 
     # Dispatch
@@ -626,12 +636,13 @@ def main() -> None:
         cmd_search(args)
     elif args.command == "config":
         cmd_config(args)
-    elif args.command == "uninstall":
-        cmd_uninstall(args)
     elif args.command == "promote":
         cmd_promote(args)
     elif args.command == "doctor":
         cmd_doctor(args)
+
+    elif args.command == "graph":
+        cmd_graph(args)
 
 
 if __name__ == "__main__":
