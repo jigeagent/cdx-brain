@@ -90,6 +90,10 @@ class _APIHandler(BaseHTTPRequestHandler):
                 self._handle_timeline(params)
             elif path == "/api/search":
                 self._handle_search(params)
+            elif path == "/api/graph":
+                self._handle_graph()
+            elif path == "/graph.html":
+                self._send_html(_GRAPH_HTML)
             elif path == "/api/health":
                 self._send_json({"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()})
             else:
@@ -151,6 +155,43 @@ class _APIHandler(BaseHTTPRequestHandler):
         self._serialize_trace(trace)
         self._send_json(trace)
 
+    def _handle_graph(self) -> None:
+        """Return graph data (nodes + edges) for force-directed viz."""
+        try:
+            db = self._get_db()
+            # Collect all unique node IDs from triples
+            nodes_set: set[str] = set()
+            edges: list[dict] = []
+            import sqlite3
+
+            triple_rows = db.execute("SELECT subject, predicate, object, confidence FROM triples ORDER BY confidence DESC LIMIT 200").fetchall()
+            if triple_rows and isinstance(triple_rows[0], sqlite3.Row):
+                for r in triple_rows:
+                    nodes_set.add(r["subject"])
+                    nodes_set.add(r["object"])
+                    edges.append({"source": r["subject"], "target": r["object"], "predicate": r["predicate"], "confidence": r["confidence"]})
+            else:
+                for r in triple_rows:
+                    nodes_set.add(r[0])
+                    nodes_set.add(r[2])
+                    edges.append({"source": r[0], "target": r[2], "predicate": r[1], "confidence": r[3]})
+
+            # Try to get labels from policies table
+            label_map: dict[str, str] = {}
+            try:
+                policy_rows = db.execute("SELECT id, name FROM policies").fetchall()
+                for r in policy_rows:
+                    key = r[0] if isinstance(r, (list, tuple)) else r["id"]
+                    name = r[1] if isinstance(r, (list, tuple)) else r["name"]
+                    label_map[key] = name
+            except Exception:
+                pass
+
+            nodes = [{"id": n, "label": label_map.get(n, n.split("_")[-1] if "_" in n else n), "group": "policy" if n.startswith("policy_") else "concept"} for n in nodes_set]
+            self._send_json({"nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges)})
+        except Exception as e:
+            self._send_json({"nodes": [], "edges": [], "error": str(e)})
+
     def _handle_policies(self) -> None:
         db = self._get_db()
         rows = db.execute(
@@ -170,16 +211,33 @@ class _APIHandler(BaseHTTPRequestHandler):
         self._send_json({"skills": skills, "count": len(skills)})
 
     def _handle_concepts(self) -> None:
-        self._send_json({
-            "concepts": [],
-            "message": "Concepts stored in OpenViking — connect OV server to view.",
-        })
+        try:
+            db = self._get_db()
+            rows = db.execute("SELECT * FROM policies ORDER BY created_at DESC LIMIT 200").fetchall()
+            import sqlite3
+            if rows and isinstance(rows[0], sqlite3.Row):
+                policies = [dict(r) for r in rows]
+            else:
+                cols = [d[0] for d in db.execute("PRAGMA table_info(policies)").fetchall()]
+                policies = [dict(zip(cols, r)) for r in rows]
+            self._send_json({"concepts": policies, "count": len(policies)})
+        except Exception:
+            self._send_json({"concepts": [], "message": "Policies not available"})
 
     def _handle_triples(self) -> None:
-        self._send_json({
-            "triples": [],
-            "message": "Triples stored in OpenViking — connect OV server to view.",
-        })
+        try:
+            db = self._get_db()
+            rows = db.execute("SELECT * FROM triples ORDER BY created_at DESC LIMIT 500").fetchall()
+            # Check if it's a Row object or tuple
+            import sqlite3
+            if rows and isinstance(rows[0], sqlite3.Row):
+                triples = [dict(r) for r in rows]
+            else:
+                cols = [d[0] for d in db.execute("PRAGMA table_info(triples)").fetchall()]
+                triples = [dict(zip(cols, r)) for r in rows]
+            self._send_json({"triples": triples, "count": len(triples)})
+        except Exception:
+            self._send_json({"triples": [], "message": "Triples not available"})
 
     def _handle_timeline(self, params: dict[str, list[str]]) -> None:
         db = self._get_db()
@@ -628,6 +686,118 @@ document.querySelectorAll('.sidebar nav a').forEach(a => {
 
 // ── Init ──
 switchView('dashboard');
+</script>
+</body>
+</html>
+"""
+_GRAPH_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cdx-brain 知识图谱</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; overflow: hidden; }
+#header { position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 12px 24px; background: rgba(13,17,23,0.9); border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 16px; }
+#header h1 { font-size: 16px; font-weight: 600; }
+#header .stats { font-size: 12px; color: #8b949e; }
+#header a { color: #58a6ff; text-decoration: none; font-size: 13px; margin-left: auto; }
+#header a:hover { text-decoration: underline; }
+#graph { width: 100vw; height: 100vh; }
+.tooltip { position: absolute; background: rgba(22,27,34,0.95); border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 12px; pointer-events: none; display: none; z-index: 100; }
+.tooltip .label { font-weight: 600; color: #f0f6fc; }
+.tooltip .detail { color: #8b949e; margin-top: 4px; }
+.node-label { font-size: 10px; pointer-events: none; fill: #8b949e; }
+.legend { position: fixed; bottom: 24px; left: 24px; z-index: 10; background: rgba(22,27,34,0.9); border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-size: 12px; }
+.legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.legend-color { width: 12px; height: 12px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>\ud83d\udd17 cdx-brain 知识图谱</h1>
+  <span class="stats" id="stats">\u8f7d\u5165\u4e2d...</span>
+  <a href="/">\u2190 \u8fd4\u56de\u63a7\u5236\u9762\u677f</a>
+</div>
+<div id="graph"></div>
+<div class="tooltip" id="tooltip">
+  <div class="label" id="tt-label"></div>
+  <div class="detail" id="tt-detail"></div>
+</div>
+<div class="legend">
+  <div class="legend-item"><div class="legend-color" style="background:#58a6ff"></div> Policy</div>
+  <div class="legend-item"><div class="legend-color" style="background="#3fb950"></div> Concept</div>
+  <div class="legend-item"><div style="border-top:2px dashed #30363d;width:12px"></div> triggers</div>
+  <div class="legend-item"><div style="border-top:2px solid #58a6ff;width:12px"></div> relates_to</div>
+</div>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(async function() {
+  const res = await fetch("/api/graph");
+  const data = await res.json();
+  const { nodes, edges, node_count, edge_count } = data;
+
+  document.getElementById("stats").textContent = node_count + " \u8282\u70b9 / " + edge_count + " \u8fb9";
+
+  if (!nodes.length) {
+    document.getElementById("stats").textContent = "\u6682\u65e0\u6570\u636e\uff0c\u8bf7\u5148\u8fd0\u884c cdx-brain graph diffuse";
+    return;
+  }
+
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
+  const g = svg.append("g");
+
+  const zoom = d3.zoom().scaleExtent([0.1, 4]).on("zoom", (e) => g.attr("transform", e.transform));
+  svg.call(zoom);
+
+  const simulation = d3.forceSimulation(nodes)
+    .force("link", d3.forceLink(edges).id(d => d.id).distance(100).strength(0.3))
+    .force("charge", d3.forceManyBody().strength(-200))
+    .force("center", d3.forceCenter(width / 2, height / 2))
+    .force("collision", d3.forceCollide(30));
+
+  const link = g.append("g").selectAll("line").data(edges).join("line")
+    .attr("stroke", d => d.predicate === "triggers" ? "#30363d" : "#58a6ff")
+    .attr("stroke-width", d => Math.max(1, d.confidence * 3))
+    .attr("stroke-dasharray", d => d.predicate === "triggers" ? "4,4" : "none")
+    .attr("opacity", 0.5);
+
+  const node = g.append("g").selectAll("circle").data(nodes).join("circle")
+    .attr("r", 8)
+    .attr("fill", d => d.group === "policy" ? "#58a6ff" : "#3fb950")
+    .attr("stroke", "#0d1117")
+    .attr("stroke-width", 2)
+    .call(d3.drag()
+      .on("start", (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on("end", (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  const label = g.append("g").selectAll("text").data(nodes).join("text")
+    .text(d => d.label.length > 20 ? d.label.slice(0,20)+"..." : d.label)
+    .attr("class", "node-label")
+    .attr("dx", 12)
+    .attr("dy", 4);
+
+  const tooltip = d3.select("#tooltip");
+  node.on("mouseover", (e, d) => {
+    tooltip.style("display", "block")
+      .style("left", (e.pageX + 12) + "px")
+      .style("top", (e.pageY - 10) + "px");
+    tooltip.select("#tt-label").text(d.label || d.id);
+    tooltip.select("#tt-detail").text("ID: " + d.id + " | " + (d.group || "unknown"));
+  }).on("mouseout", () => tooltip.style("display", "none"));
+
+  simulation.on("tick", () => {
+    link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+    node.attr("cx", d => d.x).attr("cy", d => d.y);
+    label.attr("x", d => d.x).attr("y", d => d.y);
+  });
+})();
 </script>
 </body>
 </html>
