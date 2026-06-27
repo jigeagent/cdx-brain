@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SessionEnd Hook — cc-star session summary + batch sync.
+SessionEnd Hook — cdx-brain session summary + batch sync.
 
 Extracts session summary from transcript -> saves sessions.jsonl -> batch syncs unsynced traces to OV.
 """
@@ -24,10 +24,10 @@ from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
 from cdx_brain.cache.traces import TraceRepository
 
-CACHE_PATH = os.path.expanduser("C:/Users/Administrator/.cc-star/data/cache.db")
-OV_URL = os.environ.get("CC_STAR_OV_URL", "http://127.0.0.1:1933")
+CACHE_PATH = os.path.expanduser("C:/Users/Administrator/.cdx-brain/data/cache.db")
+OV_URL = os.environ.get("CDX_BRAIN_OV_URL", "http://127.0.0.1:1933")
 OV_ENABLED = os.environ.get("CDX_BRAIN_OV_ENABLED", "$ov_enabled") in ("1", "true", "True")
-SESSIONS_FILE = Path(os.path.expanduser("C:/Users/Administrator/.cc-star/data/sessions.jsonl"))
+SESSIONS_FILE = Path(os.path.expanduser("C:/Users/Administrator/.cdx-brain/data/sessions.jsonl"))
 SYNC_BATCH_SIZE = 50
 
 

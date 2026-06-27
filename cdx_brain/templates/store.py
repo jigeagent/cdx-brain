@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stop Hook — cc-star conversation storage + memory promotion.
+Stop Hook — cdx-brain conversation storage + memory promotion.
 
 Reads transcript → stores to cache.db → optionally promotes to native memory.
 Config cascade: env var → config.yaml → template-baked default.
@@ -33,19 +33,19 @@ try:
 except Exception:
     _GET = lambda k, d=None: d
 
-CACHE_PATH = os.path.expanduser(os.environ.get("CC_STAR_CACHE_PATH", "C:/Users/Administrator/.cc-star/data/cache.db"))
-OV_URL = os.environ.get("CC_STAR_OV_URL", _GET("ov.url", "http://127.0.0.1:1933"))
-OV_ENABLED = os.environ.get("CC_STAR_OV_ENABLED", "True") in ("1", "true", "True")
+CACHE_PATH = os.path.expanduser(os.environ.get("CDX_BRAIN_CACHE_PATH", "C:/Users/Administrator/.cdx-brain/data/cache.db"))
+OV_URL = os.environ.get("CDX_BRAIN_OV_URL", _GET("ov.url", "http://127.0.0.1:1933"))
+OV_ENABLED = os.environ.get("CDX_BRAIN_OV_ENABLED", "True") in ("1", "true", "True")
 NATIVE_MEMORY_PATH = os.path.expanduser(
-    os.environ.get("CC_STAR_MEMORY_PATH", _GET("memory.memory_path", "C:/Users/Administrator/.claude/memory"))
+    os.environ.get("CDX_BRAIN_MEMORY_PATH", _GET("memory.memory_path", "C:/Users/Administrator/.claude/memory"))
 )
 if not NATIVE_MEMORY_PATH:
     _ch = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
-    NATIVE_MEMORY_PATH = os.path.join(_ch, "memories", "extensions", "cc-star")
-PROMOTE_ENABLED = os.environ.get("CC_STAR_PROMOTE_ENABLED", str(_GET("memory.promote_enabled", "True"))) in ("1", "true", "True")
-PROMOTE_THRESHOLD = int(os.environ.get("CC_STAR_PROMOTE_THRESHOLD", str(_GET("memory.promote_threshold", "3"))))
-PROMOTE_MIN_LENGTH = int(os.environ.get("CC_STAR_PROMOTE_MIN_LENGTH", str(_GET("memory.promote_min_length", "50"))))
-PROMOTE_COOLDOWN_DAYS = int(os.environ.get("CC_STAR_PROMOTE_COOLDOWN_DAYS", str(_GET("memory.promote_cooldown_days", "7"))))
+    NATIVE_MEMORY_PATH = os.path.join(_ch, "memories", "extensions", "cdx-brain")
+PROMOTE_ENABLED = os.environ.get("CDX_BRAIN_PROMOTE_ENABLED", str(_GET("memory.promote_enabled", "True"))) in ("1", "true", "True")
+PROMOTE_THRESHOLD = int(os.environ.get("CDX_BRAIN_PROMOTE_THRESHOLD", str(_GET("memory.promote_threshold", "3"))))
+PROMOTE_MIN_LENGTH = int(os.environ.get("CDX_BRAIN_PROMOTE_MIN_LENGTH", str(_GET("memory.promote_min_length", "50"))))
+PROMOTE_COOLDOWN_DAYS = int(os.environ.get("CDX_BRAIN_PROMOTE_COOLDOWN_DAYS", str(_GET("memory.promote_cooldown_days", "7"))))
 MAX_RETRIES = 5
 RETRY_DELAY_MS = 150
 TRANSCRIPT_POLL_TIMEOUT = 3.0

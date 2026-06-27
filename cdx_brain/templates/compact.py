@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PreCompact / PostCompact Hook — cc-star context compression protection.
+PreCompact / PostCompact Hook — cdx-brain context compression protection.
 
 Save: saves STATUS.md / MEMORY.md / Snapshot -> tmp JSON before compression.
 Restore: restores from tmp JSON -> additionalContext after compression.
@@ -37,22 +37,22 @@ def _resolve(key: str, env: str, baked: str) -> str:
 
 
 DATA_DIR = Path(os.path.expanduser(
-    _resolve("storage.path", "CC_STAR_DATA_DIR", "C:/Users/Administrator/.cc-star/data")
+    _resolve("storage.path", "CDX_BRAIN_DATA_DIR", "C:/Users/Administrator/.cdx-brain/data")
 ))
 TMP_FILE = DATA_DIR / "compact_state.json"
 
 MEMORY_PATH = os.path.expanduser(
-    _resolve("memory.memory_path", "CC_STAR_MEMORY_PATH", "C:/Users/Administrator/.claude/memory")
+    _resolve("memory.memory_path", "CDX_BRAIN_MEMORY_PATH", "C:/Users/Administrator/.claude/memory")
 )
 MEMORY_FILE = Path(MEMORY_PATH) if MEMORY_PATH else None
 
 STATUS_PATH = os.path.expanduser(
-    _resolve("memory.status_path", "CC_STAR_STATUS_PATH", "D:\WorkBuddy\STATUS.md")
+    _resolve("memory.status_path", "CDX_BRAIN_STATUS_PATH", "D:\WorkBuddy\STATUS.md")
 )
 STATUS_FILE = Path(STATUS_PATH) if STATUS_PATH else Path(os.path.expanduser("~/STATUS.md"))
 
 SNAPSHOT_PATH = os.path.expanduser(
-    _resolve("memory.snapshot_path", "CC_STAR_SNAPSHOT_PATH", "D:\WorkBuddy\workspace\_snapshot.md")
+    _resolve("memory.snapshot_path", "CDX_BRAIN_SNAPSHOT_PATH", "D:\WorkBuddy\workspace\_snapshot.md")
 )
 SNAPSHOT_FILE = Path(SNAPSHOT_PATH) if SNAPSHOT_PATH else Path(os.path.expanduser("~/_openviking_snapshot.md"))
 
@@ -131,7 +131,7 @@ def do_restore() -> None:
             memory_md = "\n".join(lines[:200]) + "\n\n[truncated...]"
         context_parts.append({
             "text": f"## Memory Guide\n\n{memory_md}",
-            "source": "cc-star/memory",
+            "source": "cdx-brain/memory",
             "priority": 0.9,
         })
 
@@ -143,7 +143,7 @@ def do_restore() -> None:
             snapshot = "\n".join(lines[:100]) + "\n\n[truncated...]"
         context_parts.append({
             "text": f"## Memory Snapshot\n\n{snapshot}",
-            "source": "cc-star/snapshot",
+            "source": "cdx-brain/snapshot",
             "priority": 0.7,
         })
 
@@ -152,7 +152,7 @@ def do_restore() -> None:
     if status:
         context_parts.append({
             "text": f"## Status\n\n{status[:1000]}",
-            "source": "cc-star/status",
+            "source": "cdx-brain/status",
             "priority": 0.5,
         })
 

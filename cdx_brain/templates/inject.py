@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UserPromptSubmit Hook — cc-star memory retrieval injection.
+UserPromptSubmit Hook — cdx-brain memory retrieval injection.
 
 Reads user prompt → cache.db FTS5 + native memory + OpenViking → additionalContext.
 Three sources fused via RRF merge (config cascade: env var → config.yaml → baked).
@@ -35,7 +35,7 @@ try:
 except Exception:
     _GET = lambda k, d=None: d
 
-CACHE_PATH = os.path.expanduser(os.environ.get("$cache_path", "C:/Users/Administrator/.cc-star/data/cache.db"))
+CACHE_PATH = os.path.expanduser(os.environ.get("$cache_path", "C:/Users/Administrator/.cdx-brain/data/cache.db"))
 OV_URL = os.environ.get("CDX_BRAIN_OV_URL", _GET("ov.url", "$ov_url"))
 OV_ENABLED = os.environ.get("CDX_BRAIN_OV_ENABLED", "$ov_enabled") in ("1", "true", "True")
 NATIVE_MEMORY_PATH = os.path.expanduser(
@@ -45,8 +45,8 @@ MIN_WORDS = 3
 MAX_MEMORIES = int(os.environ.get("CDX_BRAIN_MAX_INJECT", _GET("memory.max_inject", "$max_inject")))
 MAX_INJECT_NATIVE = int(os.environ.get("CDX_BRAIN_MAX_INJECT_NATIVE", _GET("memory.max_inject_native", "$max_inject_native")))
 CODEX_HOME = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
-COMPACT_THRESHOLD_PCT = int(os.environ.get("CC_STAR_COMPACT_THRESHOLD_PCT", _GET("memory.compact_threshold_pct", "80")))
-TRACE_WARN_THRESHOLD = int(os.environ.get("CC_STAR_TRACE_WARN", _GET("memory.trace_warn_threshold", "5000")))
+COMPACT_THRESHOLD_PCT = int(os.environ.get("CDX_BRAIN_COMPACT_THRESHOLD_PCT", _GET("memory.compact_threshold_pct", "80")))
+TRACE_WARN_THRESHOLD = int(os.environ.get("CDX_BRAIN_TRACE_WARN", _GET("memory.trace_warn_threshold", "5000")))
 
 
 def sanitize_query(text: str) -> str:
@@ -334,7 +334,7 @@ def main() -> None:
     for m in merged:
         context.append({
             "text": format_memory_block(m),
-            "source": f"cc-star/{m['source']}",
+            "source": f"cdx-brain/{m['source']}",
             "priority": float(m.get("score", 0.5)),
         })
 

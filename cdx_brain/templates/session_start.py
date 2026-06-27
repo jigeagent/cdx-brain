@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SessionStart Hook — cc-star session startup check.
+SessionStart Hook — cdx-brain session startup check.
 
 Checks OV health + reads last session summary.
 """
@@ -11,8 +11,8 @@ import os
 import sys
 from pathlib import Path
 
-OV_URL = os.environ.get("CC_STAR_OV_URL", "http://127.0.0.1:1933")
-SESSIONS_FILE = Path(os.path.expanduser("C:/Users/Administrator/.cc-star/data/sessions.jsonl"))
+OV_URL = os.environ.get("CDX_BRAIN_OV_URL", "http://127.0.0.1:1933")
+SESSIONS_FILE = Path(os.path.expanduser("C:/Users/Administrator/.cdx-brain/data/sessions.jsonl"))
 
 
 def check_ov_health() -> bool:
@@ -60,7 +60,7 @@ def main() -> None:
 
     # Write health heartbeat
     try:
-        health_file = SESSIONS_FILE.parent / ".cc_star_health"
+        health_file = SESSIONS_FILE.parent / ".cdx_brain_health"
         health_file.write_text(
             datetime.datetime.now(datetime.timezone.utc).isoformat(),
             encoding="utf-8"

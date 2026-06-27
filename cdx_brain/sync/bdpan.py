@@ -35,6 +35,12 @@ _WELL_KNOWN_BDPAN_PATHS = [
 
 BDPAN_REMOTE_BASE = "hermes/shared/{agent}"
 
+# ── Token expiry 避坑1 ─────────────────────────────────────────
+
+_TOKEN_EXPIRED_MSG = (
+    "bdpan Token 已过期（401），请执行 bdpan login 重新登录"
+)
+
 # ── Binary discovery ───────────────────────────────────────────
 
 
@@ -69,6 +75,63 @@ def _get_bdpan() -> str:
     return bp
 
 
+# ── I/O helpers ─────────────────────────────────────────────────
+
+
+def _decode_output(p: subprocess.CompletedProcess) -> str:
+    """Decode stdout+stderr from a completed bdpan process."""
+    return (
+        p.stdout.decode("utf-8", errors="replace")
+        + p.stderr.decode("utf-8", errors="replace")
+    )
+
+
+def _has_401(output: str) -> bool:
+    """Check if output signals an expired token (坑1)."""
+    return "401" in output or "Unauthorized" in output
+
+
+def _ensure_remote_parent(
+    remote_path: str,
+    timeout: int = 30,
+) -> str | None:
+    """Ensure remote parent directory exists before upload (避坑3).
+
+    Runs ``bdpan mkdir`` on the parent directory.  If the directory
+    already exists bdpan returns non-zero — harmless, we ignore it.
+    If the response contains ``401`` / ``Unauthorized`` we return the
+    token-expired message so the caller can bail early.
+
+    Returns:
+        ``None`` on success (or already-exists),
+        error string on 401.
+    """
+    parent = os.path.dirname(remote_path).replace("\\", "/")
+    if not parent or parent == ".":
+        return None  # nothing to create
+
+    try:
+        bp = _get_bdpan()
+    except FileNotFoundError:
+        return None  # let upload fail with a clearer message
+
+    cmd = [bp, "mkdir", parent]
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        if p.returncode != 0:
+            output = _decode_output(p)
+            if _has_401(output):
+                logger.warning("bdpan mkdir 401 for %s", parent)
+                return _TOKEN_EXPIRED_MSG
+        # non-401 failure → directory probably exists, ignore
+    except subprocess.TimeoutExpired:
+        logger.warning("bdpan mkdir timed out for %s (ignored)", parent)
+    except Exception as e:
+        logger.warning("bdpan mkdir exception for %s: %s", parent, e)
+
+    return None
+
+
 # ── Core upload ────────────────────────────────────────────────
 
 
@@ -101,6 +164,13 @@ def sync_to_bdpan(
         logger.warning("sync_to_bdpan: %s", result["error"])
         return result
 
+    # 1. Ensure remote parent directory exists (避坑3)
+    parent_err = _ensure_remote_parent(remote_path)
+    if parent_err:
+        result["error"] = parent_err
+        logger.warning("sync_to_bdpan: %s", result["error"])
+        return result
+
     try:
         bp = _get_bdpan()
     except FileNotFoundError as e:
@@ -123,7 +193,12 @@ def sync_to_bdpan(
             result["ok"] = True
             logger.info("bdpan upload OK: %s → %s", local_path, remote_path)
         else:
-            result["error"] = (stderr or stdout).strip()[:500]
+            # 避坑1: 401 检测
+            if _has_401(stdout + stderr):
+                result["error"] = _TOKEN_EXPIRED_MSG
+                logger.warning("bdpan upload 401 detected — token expired")
+            else:
+                result["error"] = (stderr or stdout).strip()[:500]
             logger.warning("bdpan upload FAILED (%d): %s", p.returncode, result["error"])
     except subprocess.TimeoutExpired:
         result["error"] = f"upload timed out after {timeout}s"

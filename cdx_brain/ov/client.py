@@ -140,6 +140,35 @@ class OpenVikingClient:
             logger.warning("content_read(%s) failed: %s", uri, e)
             return None
 
+    def _ensure_ov_parent(self, uri: str) -> bool:
+        """Create parent directory for a URI (避坑: 写入404先建目录).
+
+        Extracts the parent path and calls write with ``mode=create``
+        to ensure the namespace exists before retrying the original write.
+        """
+        parent = uri.rstrip("/").rsplit("/", 1)[0]
+        if not parent or parent == uri.rstrip("/"):
+            return True  # no parent to create — already at root
+
+        logger.info("_ensure_ov_parent: creating %s for %s", parent, uri)
+        try:
+            resp = self._client.post("/api/v1/content/write", json={
+                "uri": parent,
+                "content": "",
+                "content_type": "text/plain",
+                "mode": "create",
+            })
+            ok = resp.status_code < 500
+            if ok:
+                logger.info("_ensure_ov_parent OK: %s", parent)
+            else:
+                logger.warning("_ensure_ov_parent status=%d for %s",
+                               resp.status_code, parent)
+            return ok
+        except httpx.HTTPError as e:
+            logger.warning("_ensure_ov_parent(%s) failed: %s", parent, e)
+            return False
+
     def content_write(
         self,
         uri: str,
@@ -147,7 +176,10 @@ class OpenVikingClient:
         content_type: str = "text/markdown",
         metadata: Optional[dict[str, Any]] = None,
     ) -> bool:
-        """Write content to OpenViking storage."""
+        """Write content to OpenViking storage.
+
+        避坑: 写入 404 时自动先建目录（mode=create）再重试。
+        """
         payload: dict[str, Any] = {
             "uri": uri,
             "content": content,
@@ -160,6 +192,17 @@ class OpenVikingClient:
             resp.raise_for_status()
             return True
         except httpx.HTTPError as e:
+            status = getattr(e.response, "status_code", 0) if hasattr(e, "response") else 0
+            if status == 404:
+                logger.info("content_write 404 on %s — auto mkdir + retry", uri)
+                if self._ensure_ov_parent(uri):
+                    try:
+                        retry = self._client.post("/api/v1/content/write", json=payload)
+                        retry.raise_for_status()
+                        logger.info("content_write retry OK: %s", uri)
+                        return True
+                    except httpx.HTTPError as e2:
+                        logger.warning("content_write retry still failed: %s", e2)
             logger.warning("content_write(%s) failed: %s", uri, e)
             return False
 
