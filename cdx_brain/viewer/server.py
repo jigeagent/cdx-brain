@@ -1,7 +1,7 @@
-"""Hermes Next Viewer — stdlib-only HTTP server + SPA frontend.
 
-Usage:
-    python -m cdx_brain.viewer [--port 8080] [--db ~/.hermes-next/cache.db]
+"""cdx-brain Viewer — stdlib-only HTTP server + SPA dashboard.
+
+Covers all capabilities from v0.5.0 to v0.9.0.
 """
 
 from __future__ import annotations
@@ -9,11 +9,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import mimetypes
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, Optional
@@ -23,15 +23,13 @@ from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
 
 logger = logging.getLogger(__name__)
-
-# ── API Handler ───────────────────────────────────────────
+_HERE = Path(__file__).parent
 
 
 class _APIHandler(BaseHTTPRequestHandler):
-    """HTTP request handler serving the SPA + JSON API."""
-
     _cache: Optional[CacheConnection] = None
     _ov_url: str = ""
+    _data_dir: str = ""
 
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.debug(fmt, *args)
@@ -61,23 +59,344 @@ class _APIHandler(BaseHTTPRequestHandler):
             raise RuntimeError("Cache not initialized")
         return self._cache.conn
 
+    def _table_exists(self, name: str) -> bool:
+        try:
+            return bool(self._get_db().execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+        except Exception:
+            return False
+
+    def _read_json(self, *parts: str) -> dict:
+        p = Path(self._data_dir, *parts)
+        if not p.is_file():
+            return {}
+        try:
+            return json.loads(p.read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    # ── Dashboard ────────────────────────────────────────────
+
+    def _dashboard(self) -> dict:
+        db = self._get_db()
+        trace_count = db.execute("SELECT COUNT(*) FROM traces").fetchone()[0] or 0
+        synced = db.execute("SELECT COUNT(*) FROM traces WHERE synced=1").fetchone()[0] or 0
+        week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        new_week = db.execute("SELECT COUNT(*) FROM traces WHERE created_at >= ?", (week_ago,)).fetchone()[0] or 0
+        cache_path = Path(self._data_dir, "cache.db")
+        cache_mb = round(cache_path.stat().st_size / (1024*1024), 1) if cache_path.is_file() else 0
+
+        # Pipeline
+        pl = self._read_json("pipeline_state.json")
+        policies = pl.get("policies", [])
+        skills = pl.get("skills", [])
+        concepts = pl.get("concepts", [])
+
+        # CF
+        cf_total = 0
+        cf_this_month = 0
+        cf_convergence = "no_data"
+        cf_top = ""
+        try:
+            from cdx_brain.counterfactual.store import ensure_counterfactual_schema, count_counterfactuals
+            ensure_counterfactual_schema(db)
+            cf = count_counterfactuals(db)
+            cf_total = cf.get("total", 0)
+            if cf_total > 0:
+                month_start = datetime.now(timezone.utc).replace(day=1).isoformat()
+                cf_this_month = db.execute("SELECT COUNT(*) FROM counterfactuals WHERE created_at >= ?",
+                    (month_start,)).fetchone()[0] or 0
+                subjects = db.execute("""
+                    SELECT subject, COUNT(*) as c FROM counterfactuals
+                    GROUP BY subject ORDER BY c DESC LIMIT 5
+                """).fetchall()
+                if subjects:
+                    cf_top = subjects[0][0]
+                    total_cf = sum(r[1] for r in subjects)
+                    top_ratio = subjects[0][1] / total_cf if total_cf > 0 else 0
+                    hhi = sum((r[1]/total_cf)**2 for r in subjects)
+                    if hhi > 0.6:
+                        cf_convergence = "converged"
+                    elif hhi > 0.3:
+                        cf_convergence = "converging"
+                    else:
+                        cf_convergence = "exploring"
+        except Exception:
+            pass
+
+        # Tasks
+        tf = self._read_json("task_forest.json")
+        nodes = tf.get("nodes", {})
+        by_status = {}
+        for nd in nodes.values():
+            s = nd.get("status", "open")
+            by_status[s] = by_status.get(s, 0) + 1
+
+        # Graph
+        triple_count = db.execute("SELECT COUNT(*) FROM triples").fetchone()[0] if self._table_exists("triples") else 0
+
+        # Sentinel
+        sentinel_status = "ok"
+        sentinel_ts = ""
+        sentinel_checks = {}
+        try:
+            from cdx_brain.sentinel.scout import run_quick_check
+            qc = run_quick_check()
+            sentinel_ts = qc.get("timestamp", "")
+            sentinel_checks = qc.get("checks", {})
+            statuses = [c.get("status","ok") for c in sentinel_checks.values()]
+            if "critical" in statuses: sentinel_status = "critical"
+            elif "error" in statuses: sentinel_status = "error"
+            elif "warning" in statuses: sentinel_status = "warning"
+        except Exception:
+            pass
+
+        return {
+            "memory": {"traces": trace_count, "synced": synced, "new_this_week": new_week, "cache_mb": cache_mb},
+            "pipeline": {"policies": len(policies), "skills": len(skills), "concepts": len(concepts)},
+            "graph": {"triples": triple_count},
+            "cf": {"total": cf_total, "this_month": cf_this_month, "convergence": cf_convergence, "top_subject": cf_top},
+            "tasks": {"total": len(nodes), "active": by_status.get("open",0)+by_status.get("in_progress",0)+by_status.get("blocked",0),
+                      "blocked": by_status.get("blocked",0), "done": by_status.get("done",0)},
+            "sentinel": {"status": sentinel_status, "timestamp": sentinel_ts, "checks": sentinel_checks},
+            "promote": {"total": 0},
+        }
+
+    # ── CF API ──────────────────────────────────────────────
+
+    def _cf_timeline(self, months: int = 6) -> list[dict]:
+        db = self._get_db()
+        try:
+            from cdx_brain.counterfactual.store import ensure_counterfactual_schema
+            ensure_counterfactual_schema(db)
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
+            rows = db.execute("""
+                SELECT strftime('%%Y-%%m', created_at) as m, subject, rejected, confidence
+                FROM counterfactuals WHERE created_at >= ? ORDER BY m
+            """, (cutoff,)).fetchall()
+            months_map = {}
+            for r in rows:
+                m = r["m"]
+                if m not in months_map:
+                    months_map[m] = {"month": m, "total": 0, "by_subject": {}, "by_rejected": [], "confidences": []}
+                months_map[m]["total"] += 1
+                subj = r["subject"] or "其他"
+                months_map[m]["by_subject"][subj] = months_map[m]["by_subject"].get(subj, 0) + 1
+                months_map[m]["by_rejected"].append(r["rejected"] or "?")
+                months_map[m]["confidences"].append(r["confidence"] or 0.5)
+            result = []
+            for mk in sorted(months_map.keys()):
+                md = months_map[mk]
+                rej = sorted(md["by_subject"].items(), key=lambda x: -x[1])
+                total = md["total"]
+                hhi = sum((v/total)**2 for v in md["by_subject"].values()) if total > 0 else 0
+                result.append({
+                    "month": mk, "total": md["total"],
+                    "by_subject": dict(rej[:5]),
+                    "avg_confidence": round(sum(md["confidences"])/len(md["confidences"]), 2) if md["confidences"] else 0,
+                    "hhi": round(hhi, 3),
+                })
+            return result
+        except Exception as e:
+            return []
+
+    # ── Tasks API ───────────────────────────────────────────
+
+    def _tasks_data(self) -> dict:
+        tf = self._read_json("task_forest.json")
+        nodes = tf.get("nodes", {})
+        if not nodes:
+            return {"total": 0, "by_status": {}, "active_list": []}
+        by_status = {}
+        active_list = []
+        for nid, nd in nodes.items():
+            s = nd.get("status", "open")
+            by_status[s] = by_status.get(s, 0) + 1
+            if s in ("open", "in_progress", "blocked"):
+                updated = nd.get("updated_at", "")
+                ttl = None
+                if s == "blocked" and updated:
+                    try:
+                        ttl = max(0, 30 - (datetime.now(timezone.utc) - datetime.fromisoformat(updated)).days)
+                    except Exception:
+                        pass
+                active_list.append({
+                    "id": nid[:12], "title": (nd.get("title","?") or "?")[:30],
+                    "status": s, "blocked_by": nd.get("blocked_by", []),
+                    "ttl_days": ttl,
+                })
+        active_list.sort(key=lambda x: {"blocked":0,"in_progress":1,"open":2}.get(x["status"], 9))
+        return {"total": len(nodes), "by_status": by_status, "active_list": active_list[:20]}
+
+    def _tasks_mermaid(self) -> str:
+        try:
+            from cdx_brain.task_forest.forest import TaskForest
+            f = TaskForest(data_dir=self._data_dir)
+            return f.to_mermaid()
+        except Exception:
+            return "flowchart TD\\n  empty[No tasks]"
+
+    # ── Activity API ────────────────────────────────────────
+
+    def _memory_activity(self, days: int = 7) -> list[dict]:
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            rows = self._get_db().execute("""
+                SELECT date(created_at) as d, COUNT(*) as c
+                FROM traces WHERE created_at >= ?
+                GROUP BY d ORDER BY d DESC LIMIT 30
+            """, (cutoff,)).fetchall()
+            return [{"date": r["d"], "traces": r["c"]} for r in rows]
+        except Exception:
+            return []
+
+    # ── Sentinel ────────────────────────────────────────────
+
+    def _sentinel_quick(self) -> dict:
+        try:
+            from cdx_brain.sentinel.scout import run_quick_check
+            return dict(run_quick_check())
+        except Exception:
+            return {"type": "quick", "checks": {}, "timestamp": datetime.now(timezone.utc).isoformat()}
+
+    def _sentinel_history(self, days: int = 7) -> list[dict]:
+        path = Path(self._data_dir, "scout_reports.jsonl")
+        if not path.is_file():
+            return []
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        entries = []
+        try:
+            for line in path.read_text("utf-8").strip().split("\n"):
+                if not line.strip():
+                    continue
+                e = json.loads(line)
+                if e.get("timestamp","") >= cutoff:
+                    entries.append({"timestamp": e["timestamp"][:19], "checks": e.get("checks",{})})
+        except Exception:
+            pass
+        return entries[-30:]
+
+    # ── Search ──────────────────────────────────────────────
+
+    def _search(self, q: str) -> dict:
+        if not q:
+            return {"results": [], "sources": {}}
+        from cdx_brain.cache.traces import TraceRepository
+        from cdx_brain.retrieval.ranker import rrf_merge
+        repo = TraceRepository(self._cache)
+        results = []
+        try:
+            for t in repo.search_fts(q, limit=6):
+                uc = (t.user_content or "")[:150]
+                ac = (t.assistant_content or "")[:150]
+                results.append({"text": uc + (" | " + ac if ac else ""), "source": "local",
+                    "score": 1.0, "date": (t.created_at or "")[:10]})
+        except Exception:
+            pass
+        try:
+            from cdx_brain.counterfactual.store import search_counterfactuals as cf_search
+            for r in cf_search(self._get_db(), q, limit=3):
+                results.append({"text": f'[{r.get("subject","?")}] 放弃{r.get("rejected","?")}: {r.get("reason","")[:100]}', 
+                    "source": "counterfactual", "score": r.get("confidence",0.5), "date": (r.get("created_at","") or "")[:10]})
+        except Exception:
+            pass
+        results.sort(key=lambda x: -x["score"])
+        sources = {}
+        for r in results:
+            sources[r["source"]] = sources.get(r["source"], 0) + 1
+        return {"results": results[:20], "sources": sources}
+
+    # ── Legacy handlers ─────────────────────────────────────
+
+    def _handle_stats(self) -> None:
+        db = self._get_db()
+        tc = db.execute("SELECT COUNT(*) FROM traces").fetchone()[0] or 0
+        pc = db.execute("SELECT COUNT(*) FROM policies").fetchone()[0] if self._table_exists("policies") else 0
+        sc = db.execute("SELECT COUNT(*) FROM skills").fetchone()[0] if self._table_exists("skills") else 0
+        sync = db.execute("SELECT COUNT(*) FROM traces WHERE synced=1").fetchone()[0] or 0
+        self._send_json({"traces": tc, "policies": pc, "skills": sc, "synced": sync, "ov_url": self._ov_url})
+
+    def _handle_traces(self, params: dict) -> None:
+        db = self._get_db()
+        limit = min(int(params.get("limit", ["50"])[0]), 200)
+        offset = int(params.get("offset", ["0"])[0])
+        q = params.get("search", [None])[0]
+        if q:
+            rows = db.execute("SELECT * FROM traces WHERE user_content LIKE ? OR assistant_content LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (f"%{q}%", f"%{q}%", limit, offset)).fetchall()
+        else:
+            rows = db.execute("SELECT * FROM traces ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+        self._send_json([dict(r) for r in rows])
+
+    def _handle_trace_detail(self, tid: str) -> None:
+        row = self._get_db().execute("SELECT * FROM traces WHERE id=?", (tid,)).fetchone()
+        self._send_json(dict(row) if row else {"error": "not found"})
+
+    def _handle_policies(self) -> None:
+        self._send_json(self._read_json("pipeline_state.json").get("policies", []))
+
+    def _handle_skills(self) -> None:
+        self._send_json(self._read_json("pipeline_state.json").get("skills", []))
+
+    def _handle_concepts(self) -> None:
+        self._send_json(self._read_json("pipeline_state.json").get("concepts", []))
+
+    def _handle_triples(self) -> None:
+        if not self._table_exists("triples"):
+            self._send_json([])
+            return
+        rows = self._get_db().execute("SELECT * FROM triples ORDER BY created_at DESC LIMIT 100").fetchall()
+        self._send_json([dict(r) for r in rows])
+
+    def _handle_timeline(self, params: dict) -> None:
+        days = int(params.get("days", ["30"])[0])
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = self._get_db().execute("SELECT date(created_at) as d, COUNT(*) as c FROM traces WHERE created_at >= ? GROUP BY d ORDER BY d",
+            (cutoff,)).fetchall()
+        self._send_json([{"date": r["d"], "count": r["c"]} for r in rows])
+
+    def _handle_search(self, params: dict) -> None:
+        self._send_json(self._search(params.get("q", [""])[0]))
+
+    def _handle_graph(self) -> None:
+        db = self._get_db()
+        if not self._table_exists("triples"):
+            self._send_json({"nodes": [], "edges": [], "node_count": 0, "edge_count": 0})
+            return
+        trips = db.execute("SELECT subject, predicate, object, confidence FROM triples ORDER BY confidence DESC LIMIT 200").fetchall()
+        node_ids, nodes, edges = set(), [], []
+        for t in trips:
+            for name in (t["subject"], t["object"]):
+                if name not in node_ids:
+                    node_ids.add(name)
+                    nodes.append({"id": name, "label": name, "group": "concept"})
+            edges.append({"source": t["subject"], "target": t["object"], "predicate": t["predicate"],
+                "confidence": t.get("confidence", 0.5)})
+        self._send_json({"nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges)})
+
+    def _load_template(self, name: str) -> str:
+        tpl = _HERE / "templates" / name
+        if tpl.is_file():
+            return tpl.read_text("utf-8")
+        return f"<html><body><h1>Template {name} not found</h1></body></html>"
+
     # ── Routing ───────────────────────────────────────────
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         params = parse_qs(parsed.query)
-
         try:
-            if path == "" or path == "/" or path == "/index.html":
-                self._send_html(_SPA_HTML)
+            if path in ("", "/", "/index.html"):
+                self._send_html(self._load_template("dashboard.html"))
+            elif path == "/api/dashboard":
+                self._send_json(self._dashboard())
             elif path == "/api/stats":
                 self._handle_stats()
             elif path == "/api/traces":
                 self._handle_traces(params)
             elif path.startswith("/api/traces/"):
-                trace_id = path.split("/api/traces/")[1]
-                self._handle_trace_detail(trace_id)
+                self._handle_trace_detail(path.split("/api/traces/")[1])
             elif path == "/api/policies":
                 self._handle_policies()
             elif path == "/api/skills":
@@ -93,715 +412,61 @@ class _APIHandler(BaseHTTPRequestHandler):
             elif path == "/api/graph":
                 self._handle_graph()
             elif path == "/graph.html":
-                self._send_html(_GRAPH_HTML)
+                self._send_html(self._load_template("graph.html"))
             elif path == "/api/health":
-                self._send_json({"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()})
+                self._send_json(self._sentinel_quick())
+            elif path == "/api/cf/timeline":
+                self._send_json(self._cf_timeline(int(params.get("months", ["6"])[0])))
+            elif path == "/api/tasks/data":
+                self._send_json(self._tasks_data())
+            elif path == "/api/tasks/mermaid":
+                self._send_json({"mermaid": self._tasks_mermaid()})
+            elif path == "/api/pipeline":
+                self._send_json(self._read_json("pipeline_state.json"))
+            elif path == "/api/activity":
+                self._send_json(self._memory_activity(int(params.get("days", ["7"])[0])))
+            elif path == "/api/health/history":
+                self._send_json(self._sentinel_history(int(params.get("days", ["7"])[0])))
             else:
                 self._send_error("Not found", 404)
         except Exception as e:
             logger.exception("API error: %s", e)
             self._send_error(str(e), 500)
 
-    # ── API Handlers ──────────────────────────────────────
 
-    def _handle_stats(self) -> None:
-        db = self._get_db()
-        trace_count = db.execute("SELECT COUNT(*) FROM traces").fetchone()[0]
-        policy_count = db.execute("SELECT COUNT(*) FROM policies").fetchone()[0]
-        skill_count = db.execute("SELECT COUNT(*) FROM skills").fetchone()[0]
-        synced_count = db.execute("SELECT COUNT(*) FROM traces WHERE synced=1").fetchone()[0]
-        self._send_json({
-            "traces": trace_count,
-            "policies": policy_count,
-            "skills": skill_count,
-            "synced": synced_count,
-            "ov_url": self._ov_url,
-        })
+# ── Server setup ─────────────────────────────────────────
 
-    def _handle_traces(self, params: dict[str, list[str]]) -> None:
-        db = self._get_db()
-        limit = min(int(params.get("limit", ["50"])[0]), 200)
-        offset = int(params.get("offset", ["0"])[0])
-        search = params.get("search", [None])[0]
-
-        if search:
-            safe = search.replace('"', '""')
-            rows = db.execute(
-                """
-                SELECT t.* FROM traces t
-                JOIN traces_fts fts ON t.rowid = fts.rowid
-                WHERE traces_fts MATCH ?
-                ORDER BY rank
-                LIMIT ? OFFSET ?
-                """, (safe, limit, offset),
-            ).fetchall()
-        else:
-            rows = db.execute(
-                "SELECT * FROM traces ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
-
-        traces = [dict(r) for r in rows]
-        for t in traces:
-            self._serialize_trace(t)
-        self._send_json({"traces": traces, "count": len(traces)})
-
-    def _handle_trace_detail(self, trace_id: str) -> None:
-        db = self._get_db()
-        row = db.execute("SELECT * FROM traces WHERE id = ?", (trace_id,)).fetchone()
-        if not row:
-            return self._send_error("Trace not found", 404)
-        trace = dict(row)
-        self._serialize_trace(trace)
-        self._send_json(trace)
-
-    def _handle_graph(self) -> None:
-        """Return graph data (nodes + edges) for force-directed viz."""
-        try:
-            db = self._get_db()
-            # Collect all unique node IDs from triples
-            nodes_set: set[str] = set()
-            edges: list[dict] = []
-            import sqlite3
-
-            triple_rows = db.execute("SELECT subject, predicate, object, confidence FROM triples ORDER BY confidence DESC LIMIT 200").fetchall()
-            if triple_rows and isinstance(triple_rows[0], sqlite3.Row):
-                for r in triple_rows:
-                    nodes_set.add(r["subject"])
-                    nodes_set.add(r["object"])
-                    edges.append({"source": r["subject"], "target": r["object"], "predicate": r["predicate"], "confidence": r["confidence"]})
-            else:
-                for r in triple_rows:
-                    nodes_set.add(r[0])
-                    nodes_set.add(r[2])
-                    edges.append({"source": r[0], "target": r[2], "predicate": r[1], "confidence": r[3]})
-
-            # Try to get labels from policies table
-            label_map: dict[str, str] = {}
-            try:
-                policy_rows = db.execute("SELECT id, name FROM policies").fetchall()
-                for r in policy_rows:
-                    key = r[0] if isinstance(r, (list, tuple)) else r["id"]
-                    name = r[1] if isinstance(r, (list, tuple)) else r["name"]
-                    label_map[key] = name
-            except Exception:
-                pass
-
-            nodes = [{"id": n, "label": label_map.get(n, n.split("_")[-1] if "_" in n else n), "group": "policy" if n.startswith("policy_") else "concept"} for n in nodes_set]
-            self._send_json({"nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges)})
-        except Exception as e:
-            self._send_json({"nodes": [], "edges": [], "error": str(e)})
-
-    def _handle_policies(self) -> None:
-        db = self._get_db()
-        rows = db.execute(
-            "SELECT * FROM policies ORDER BY confidence DESC"
-        ).fetchall()
-        policies = [dict(r) for r in rows]
-        for p in policies:
-            self._serialize_json_fields(p)
-        self._send_json({"policies": policies, "count": len(policies)})
-
-    def _handle_skills(self) -> None:
-        db = self._get_db()
-        rows = db.execute("SELECT * FROM skills ORDER BY name ASC").fetchall()
-        skills = [dict(r) for r in rows]
-        for s in skills:
-            self._serialize_json_fields(s)
-        self._send_json({"skills": skills, "count": len(skills)})
-
-    def _handle_concepts(self) -> None:
-        try:
-            db = self._get_db()
-            rows = db.execute("SELECT * FROM policies ORDER BY created_at DESC LIMIT 200").fetchall()
-            import sqlite3
-            if rows and isinstance(rows[0], sqlite3.Row):
-                policies = [dict(r) for r in rows]
-            else:
-                cols = [d[0] for d in db.execute("PRAGMA table_info(policies)").fetchall()]
-                policies = [dict(zip(cols, r)) for r in rows]
-            self._send_json({"concepts": policies, "count": len(policies)})
-        except Exception:
-            self._send_json({"concepts": [], "message": "Policies not available"})
-
-    def _handle_triples(self) -> None:
-        try:
-            db = self._get_db()
-            rows = db.execute("SELECT * FROM triples ORDER BY created_at DESC LIMIT 500").fetchall()
-            # Check if it's a Row object or tuple
-            import sqlite3
-            if rows and isinstance(rows[0], sqlite3.Row):
-                triples = [dict(r) for r in rows]
-            else:
-                cols = [d[0] for d in db.execute("PRAGMA table_info(triples)").fetchall()]
-                triples = [dict(zip(cols, r)) for r in rows]
-            self._send_json({"triples": triples, "count": len(triples)})
-        except Exception:
-            self._send_json({"triples": [], "message": "Triples not available"})
-
-    def _handle_timeline(self, params: dict[str, list[str]]) -> None:
-        db = self._get_db()
-        limit = min(int(params.get("limit", ["20"])[0]), 100)
-        rows = db.execute(
-            "SELECT id, session_id, turn_index, created_at, user_content, reward, synced "
-            "FROM traces ORDER BY created_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        items = [dict(r) for r in rows]
-        self._send_json({"timeline": items, "count": len(items)})
-
-    def _handle_search(self, params: dict[str, list[str]]) -> None:
-        db = self._get_db()
-        q = params.get("q", [""])[0]
-        if not q:
-            return self._send_json({"results": [], "count": 0})
-        safe = q.replace('"', '""')
-        rows = db.execute(
-            """
-            SELECT t.id, t.session_id, t.turn_index, t.user_content,
-                   t.assistant_content, t.reward, t.created_at
-            FROM traces t
-            JOIN traces_fts fts ON t.rowid = fts.rowid
-            WHERE traces_fts MATCH ?
-            ORDER BY rank
-            LIMIT 20
-            """, (safe,),
-        ).fetchall()
-        results = [dict(r) for r in rows]
-        self._send_json({"results": results, "count": len(results)})
-
-    # ── Helpers ───────────────────────────────────────────
-
-    @staticmethod
-    def _serialize_trace(t: dict[str, Any]) -> None:
-        """Convert binary/complex fields to displayable formats."""
-        if t.get("embedding") and isinstance(t["embedding"], str):
-            try:
-                emb = json.loads(t["embedding"])
-                t["embedding"] = f"float[{len(emb)}]"
-            except (json.JSONDecodeError, TypeError):
-                t["embedding"] = "N/A"
-        if t.get("tags") and isinstance(t["tags"], str):
-            try:
-                t["tags"] = json.loads(t["tags"])
-            except (json.JSONDecodeError, TypeError):
-                t["tags"] = []
-        if t.get("metadata") and isinstance(t["metadata"], str):
-            try:
-                t["metadata"] = json.loads(t["metadata"])
-            except (json.JSONDecodeError, TypeError):
-                t["metadata"] = {}
-
-    @staticmethod
-    def _serialize_json_fields(row: dict[str, Any]) -> None:
-        for key in ("metadata", "source_trace_ids", "source_policy_ids"):
-            if key in row and isinstance(row[key], str):
-                try:
-                    row[key] = json.loads(row[key])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        if row.get("embedding") and isinstance(row["embedding"], str):
-            try:
-                emb = json.loads(row["embedding"])
-                row["embedding"] = f"float[{len(emb)}]"
-            except (json.JSONDecodeError, TypeError):
-                row["embedding"] = "N/A"
-
-
-# ── Server Launcher ───────────────────────────────────────
-
-
-def serve(
-    cache_path: str = "~/.hermes-next/cache.db",
-    ov_url: str = "http://localhost:1933",
-    port: int = 8080,
-    host: str = "127.0.0.1",
-) -> None:
-    """Start the Hermes Next Viewer server.
-
-    Args:
-        cache_path: Path to SQLite cache database.
-        ov_url: OpenViking server URL (for display).
-        port: HTTP server port.
-        host: Bind address.
-    """
-    # Initialize cache
+def serve(cache_path="", ov_url="", port=8080, host="127.0.0.1", data_dir=""):
+    if not cache_path:
+        cache_path = str(Path.home() / ".cdx-brain" / "data" / "cache.db")
+    if not data_dir:
+        data_dir = str(Path(cache_path).parent)
     cache = CacheConnection(cache_path)
     ensure_schema(cache)
-
-    # Inject into handler class
     _APIHandler._cache = cache
     _APIHandler._ov_url = ov_url
-
+    _APIHandler._data_dir = data_dir
     server = HTTPServer((host, port), _APIHandler)
-    print(f"╔══════════════════════════════════════════╗")
-    print(f"║  Hermes Next Viewer                      ║")
-    print(f"║  ──────────────────────                  ║")
-    print(f"║  Local:   http://{host}:{port}              ║")
-    print(f"║  Cache:   {cache_path}  ║")
-    print(f"║  OpenViking: {ov_url}  ║")
-    print(f"║                                          ║")
-    print(f"║  Ctrl+C to stop                          ║")
-    print(f"╚══════════════════════════════════════════╝")
-
+    logger.info("Viewer on http://%s:%d", host, port)
+    print(f"cdx-brain Viewer: http://{host}:{port}", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down...")
-    finally:
-        server.server_close()
+        server.shutdown()
         cache.close_all()
+        logger.info("Viewer stopped")
 
 
-def main() -> None:
-    """CLI entry point."""
-    parser = argparse.ArgumentParser(description="Hermes Next Viewer")
-    parser.add_argument("--port", type=int, default=8080, help="Server port")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind address")
-    parser.add_argument("--db", type=str, default="~/.hermes-next/cache.db", help="Cache DB path")
-    parser.add_argument("--ov-url", type=str, default="http://localhost:1933", help="OpenViking URL")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
+def main():
+    parser = argparse.ArgumentParser(description="cdx-brain Viewer")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("CDX_VIEWER_PORT", "8080")))
+    parser.add_argument("--host", default=os.environ.get("CDX_VIEWER_HOST", "127.0.0.1"))
+    parser.add_argument("--db", dest="cache_path", default="")
+    parser.add_argument("--data-dir", default="")
+    parser.add_argument("--ov-url", default=os.environ.get("OV_URL", "http://localhost:1933"))
     args = parser.parse_args()
+    serve(cache_path=args.cache_path, ov_url=args.ov_url, port=args.port, host=args.host, data_dir=args.data_dir)
 
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
-
-    serve(
-        cache_path=args.db,
-        ov_url=args.ov_url,
-        port=args.port,
-        host=args.host,
-    )
-
-
-if __name__ == "__main__":
-    main()
-
-
-# ═══════════════════════════════════════════════════════════
-# SPA HTML — embedded single-page application
-# ═══════════════════════════════════════════════════════════
-
-_SPA_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hermes Next Viewer</title>
-<style>
-  :root {
-    --bg: #0f1117; --surface: #1a1c25; --border: #2a2d3a;
-    --text: #e1e4ea; --muted: #8b8fa3; --accent: #6c8cff;
-    --green: #4caf7d; --red: #e55555; --yellow: #e5b955;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-         background: var(--bg); color: var(--text); line-height: 1.5; }
-  .layout { display: flex; min-height: 100vh; }
-  .sidebar { width: 220px; background: var(--surface); border-right: 1px solid var(--border);
-             padding: 1.5rem 0; flex-shrink: 0; }
-  .sidebar h1 { font-size: 1rem; padding: 0 1.25rem 1rem; border-bottom: 1px solid var(--border);
-                margin-bottom: 0.5rem; color: var(--accent); }
-  .sidebar nav a { display: block; padding: 0.6rem 1.25rem; color: var(--muted);
-                   text-decoration: none; font-size: 0.875rem; transition: 0.15s; }
-  .sidebar nav a:hover, .sidebar nav a.active { color: var(--text); background: rgba(108,140,255,0.1); }
-  .sidebar nav a.active { border-left: 2px solid var(--accent); }
-  .main { flex: 1; padding: 2rem; overflow-y: auto; max-width: calc(100vw - 220px); }
-  h2 { font-size: 1.5rem; margin-bottom: 1.5rem; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-           gap: 1rem; margin-bottom: 2rem; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-          padding: 1.25rem; }
-  .card .num { font-size: 2rem; font-weight: 600; color: var(--accent); }
-  .card .label { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
-  .search-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-  .search-bar input { flex: 1; padding: 0.6rem 1rem; border-radius: 6px; border: 1px solid var(--border);
-                      background: var(--surface); color: var(--text); font-size: 0.875rem; }
-  .search-bar input:focus { outline: none; border-color: var(--accent); }
-  .search-bar button { padding: 0.6rem 1.2rem; border-radius: 6px; border: none;
-                       background: var(--accent); color: #fff; cursor: pointer; font-size: 0.875rem; }
-  .search-bar button:hover { opacity: 0.9; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th, td { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; }
-  tr:hover td { background: rgba(108,140,255,0.05); }
-  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
-           font-size: 0.75rem; font-weight: 500; }
-  .badge-success { background: rgba(76,175,125,0.2); color: var(--green); }
-  .badge-warning { background: rgba(229,185,85,0.2); color: var(--yellow); }
-  .badge-info { background: rgba(108,140,255,0.2); color: var(--accent); }
-  .trace-detail { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; }
-  .trace-detail pre { background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 6px;
-                      overflow-x: auto; margin-top: 0.75rem; font-size: 0.825rem; line-height: 1.6; }
-  .detail-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
-  .detail-row .key { color: var(--muted); min-width: 120px; }
-  .hidden { display: none; }
-  .timeline-item { display: flex; gap: 1rem; padding: 0.75rem; border-bottom: 1px solid var(--border); }
-  .timeline-item .time { color: var(--muted); min-width: 140px; font-size: 0.8rem; }
-  .timeline-item .content { flex: 1; }
-  .mt-2 { margin-top: 1rem; }
-  .mb-1 { margin-bottom: 0.5rem; }
-  .tag { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px;
-         background: rgba(108,140,255,0.15); color: var(--accent); font-size: 0.75rem; margin: 0.1rem; }
-</style>
-</head>
-<body>
-<div class="layout">
-  <div class="sidebar">
-    <h1>Hermes Next</h1>
-    <nav>
-      <a href="#" data-view="dashboard" class="active">Dashboard</a>
-      <a href="#" data-view="traces">Traces</a>
-      <a href="#" data-view="policies">Policies</a>
-      <a href="#" data-view="skills">Skills</a>
-      <a href="#" data-view="timeline">Timeline</a>
-      <a href="#" data-view="search">Search</a>
-    </nav>
-  </div>
-  <div class="main" id="main-content">
-    <div id="view-container">Loading...</div>
-  </div>
-</div>
-<script>
-const API = '';
-let currentView = 'dashboard';
-
-async function api(path) {
-  const r = await fetch(API + path);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-function escape(v) {
-  if (v == null) return '<span class="muted">—</span>';
-  const s = String(v);
-  const d = document.createElement('div');
-  d.textContent = s.slice(0, 300);
-  return d.innerHTML;
-}
-
-function fmtTime(iso) {
-  if (!iso) return '—';
-  try { return new Date(iso).toLocaleString(); } catch { return iso; }
-}
-
-// ── Views ──
-
-async function renderDashboard() {
-  const s = await api('/api/stats');
-  document.getElementById('view-container').innerHTML = `
-    <h2>Dashboard</h2>
-    <div class="stats">
-      <div class="card"><div class="num">${s.traces}</div><div class="label">Traces</div></div>
-      <div class="card"><div class="num">${s.policies}</div><div class="label">Policies</div></div>
-      <div class="card"><div class="num">${s.skills}</div><div class="label">Skills</div></div>
-      <div class="card"><div class="num">${s.synced}</div><div class="label">Synced</div></div>
-    </div>
-    <div class="card">
-      <div class="label mb-1">OpenViking</div>
-      <div>${escape(s.ov_url)}</div>
-    </div>
-  `;
-}
-
-async function renderTraces() {
-  const data = await api('/api/traces?limit=100');
-  const traces = data.traces || [];
-  document.getElementById('view-container').innerHTML = `
-    <h2>Traces</h2>
-    <p class="muted mb-1">${data.count} traces</p>
-    <table>
-      <thead><tr>
-        <th>ID</th><th>Session</th><th>Turn</th><th>User</th><th>Reward</th><th>Synced</th><th>Created</th>
-      </tr></thead>
-      <tbody>
-        ${traces.map(t => `<tr>
-          <td><a href="#" onclick="showTrace('${escape(t.id)}'); return false">${escape(t.id).slice(0,12)}</a></td>
-          <td>${escape(t.session_id).slice(0,12)}</td>
-          <td>${t.turn_index}</td>
-          <td>${escape(t.user_content).slice(0,60)}</td>
-          <td>${t.reward != null ? t.reward.toFixed(2) : '0.00'}</td>
-          <td>${t.synced ? '<span class="badge badge-success">yes</span>' : '<span class="badge badge-warning">no</span>'}</td>
-          <td>${fmtTime(t.created_at)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-    <div id="trace-detail" class="mt-2"></div>
-  `;
-}
-
-async function showTrace(id) {
-  const t = await api('/api/traces/' + id);
-  const el = document.getElementById('trace-detail');
-  el.innerHTML = `
-    <div class="trace-detail">
-      <h3 class="mb-1">Trace: ${escape(t.id)}</h3>
-      <div class="detail-row"><span class="key">Session</span><span>${escape(t.session_id)}</span></div>
-      <div class="detail-row"><span class="key">Turn</span><span>${t.turn_index}</span></div>
-      <div class="detail-row"><span class="key">Reward</span><span>${t.reward?.toFixed(3) ?? '0.000'}</span></div>
-      <div class="detail-row"><span class="key">Embedding</span><span>${escape(t.embedding)}</span></div>
-      <div class="detail-row"><span class="key">Tags</span><span>${Array.isArray(t.tags) ? t.tags.map(x => '<span class="tag">'+escape(x)+'</span>').join('') : escape(t.tags)}</span></div>
-      <div class="detail-row"><span class="key">Created</span><span>${fmtTime(t.created_at)}</span></div>
-      <div class="mt-2"><strong>User:</strong><pre>${escape(t.user_content)}</pre></div>
-      <div class="mt-2"><strong>Assistant:</strong><pre>${escape(t.assistant_content)}</pre></div>
-    </div>
-  `;
-  el.scrollIntoView({ behavior: 'smooth' });
-}
-
-async function renderPolicies() {
-  const data = await api('/api/policies');
-  const policies = data.policies || [];
-  document.getElementById('view-container').innerHTML = `
-    <h2>Policies</h2>
-    <p class="muted mb-1">${data.count} policies</p>
-    <table>
-      <thead><tr>
-        <th>Name</th><th>Confidence</th><th>Activations</th><th>Description</th><th>Created</th>
-      </tr></thead>
-      <tbody>
-        ${policies.map(p => `<tr>
-          <td><strong>${escape(p.name)}</strong></td>
-          <td><span class="badge ${p.confidence >= 0.5 ? 'badge-success' : 'badge-warning'}">${p.confidence?.toFixed(3)}</span></td>
-          <td>${p.activation_count ?? 0}</td>
-          <td>${escape(p.description).slice(0,80)}</td>
-          <td>${fmtTime(p.created_at)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-async function renderSkills() {
-  const data = await api('/api/skills');
-  const skills = data.skills || [];
-  document.getElementById('view-container').innerHTML = `
-    <h2>Skills</h2>
-    <p class="muted mb-1">${data.count} skills</p>
-    <table>
-      <thead><tr>
-        <th>Name</th><th>Version</th><th>Description</th><th>Source Policies</th><th>Created</th>
-      </tr></thead>
-      <tbody>
-        ${skills.map(s => `<tr>
-          <td><strong>${escape(s.name)}</strong></td>
-          <td>v${s.version}</td>
-          <td>${escape(s.description).slice(0,80)}</td>
-          <td>${Array.isArray(s.source_policy_ids) ? s.source_policy_ids.length : 0}</td>
-          <td>${fmtTime(s.created_at)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-async function renderTimeline() {
-  const data = await api('/api/timeline?limit=50');
-  const items = data.timeline || [];
-  document.getElementById('view-container').innerHTML = `
-    <h2>Timeline</h2>
-    <p class="muted mb-1">${data.count} recent events</p>
-    ${items.map(i => `
-      <div class="timeline-item">
-        <div class="time">${fmtTime(i.created_at)}</div>
-        <div class="content">
-          <div><a href="#" onclick="switchView('traces'); setTimeout(()=>showTrace('${escape(i.id)}'),100); return false">
-            <strong>${escape(i.id).slice(0,12)}</strong></a>
-            <span class="badge ${i.synced ? 'badge-success' : 'badge-warning'}">${i.synced ? 'synced' : 'local'}</span>
-          </div>
-          <div class="muted">${escape(i.user_content).slice(0,100)}</div>
-          <div class="muted">reward: ${i.reward?.toFixed(2) ?? '0.00'} · session: ${escape(i.session_id).slice(0,16)}</div>
-        </div>
-      </div>
-    `).join('')}
-  `;
-}
-
-async function renderSearch() {
-  document.getElementById('view-container').innerHTML = `
-    <h2>Search</h2>
-    <div class="search-bar">
-      <input type="text" id="search-input" placeholder="Search traces (FTS5)..." onkeydown="if(event.key==='Enter') doSearch()">
-      <button onclick="doSearch()">Search</button>
-    </div>
-    <div id="search-results"></div>
-  `;
-}
-
-async function doSearch() {
-  const q = document.getElementById('search-input')?.value;
-  if (!q) return;
-  const data = await api('/api/search?q=' + encodeURIComponent(q));
-  const results = data.results || [];
-  const el = document.getElementById('search-results');
-  if (results.length === 0) {
-    el.innerHTML = '<p class="muted">No results found.</p>';
-    return;
-  }
-  el.innerHTML = `
-    <p class="muted mb-1">${data.count} results</p>
-    <table>
-      <thead><tr><th>ID</th><th>User</th><th>Assistant</th><th>Reward</th><th>Time</th></tr></thead>
-      <tbody>
-        ${results.map(r => `<tr>
-          <td><a href="#" onclick="switchView('traces'); setTimeout(()=>showTrace('${escape(r.id)}'),100); return false">${escape(r.id).slice(0,12)}</a></td>
-          <td>${escape(r.user_content).slice(0,60)}</td>
-          <td>${escape(r.assistant_content).slice(0,60)}</td>
-          <td>${r.reward?.toFixed(2) ?? '0.00'}</td>
-          <td>${fmtTime(r.created_at)}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-// ── Navigation ──
-
-const VIEWS = {
-  dashboard: renderDashboard,
-  traces: renderTraces,
-  policies: renderPolicies,
-  skills: renderSkills,
-  timeline: renderTimeline,
-  search: renderSearch,
-};
-
-async function switchView(name) {
-  currentView = name;
-  document.querySelectorAll('.sidebar nav a').forEach(a => {
-    a.classList.toggle('active', a.dataset.view === name);
-  });
-  const renderFn = VIEWS[name];
-  if (renderFn) await renderFn();
-}
-
-document.querySelectorAll('.sidebar nav a').forEach(a => {
-  a.addEventListener('click', e => {
-    e.preventDefault();
-    switchView(a.dataset.view);
-  });
-});
-
-// ── Init ──
-switchView('dashboard');
-</script>
-</body>
-</html>
-"""
-_GRAPH_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>cdx-brain 知识图谱</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; overflow: hidden; }
-#header { position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 12px 24px; background: rgba(13,17,23,0.9); border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 16px; }
-#header h1 { font-size: 16px; font-weight: 600; }
-#header .stats { font-size: 12px; color: #8b949e; }
-#header a { color: #58a6ff; text-decoration: none; font-size: 13px; margin-left: auto; }
-#header a:hover { text-decoration: underline; }
-#graph { width: 100vw; height: 100vh; }
-.tooltip { position: absolute; background: rgba(22,27,34,0.95); border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; font-size: 12px; pointer-events: none; display: none; z-index: 100; }
-.tooltip .label { font-weight: 600; color: #f0f6fc; }
-.tooltip .detail { color: #8b949e; margin-top: 4px; }
-.node-label { font-size: 10px; pointer-events: none; fill: #8b949e; }
-.legend { position: fixed; bottom: 24px; left: 24px; z-index: 10; background: rgba(22,27,34,0.9); border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-size: 12px; }
-.legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.legend-color { width: 12px; height: 12px; border-radius: 50%; }
-</style>
-</head>
-<body>
-<div id="header">
-  <h1>\ud83d\udd17 cdx-brain 知识图谱</h1>
-  <span class="stats" id="stats">\u8f7d\u5165\u4e2d...</span>
-  <a href="/">\u2190 \u8fd4\u56de\u63a7\u5236\u9762\u677f</a>
-</div>
-<div id="graph"></div>
-<div class="tooltip" id="tooltip">
-  <div class="label" id="tt-label"></div>
-  <div class="detail" id="tt-detail"></div>
-</div>
-<div class="legend">
-  <div class="legend-item"><div class="legend-color" style="background:#58a6ff"></div> Policy</div>
-  <div class="legend-item"><div class="legend-color" style="background="#3fb950"></div> Concept</div>
-  <div class="legend-item"><div style="border-top:2px dashed #30363d;width:12px"></div> triggers</div>
-  <div class="legend-item"><div style="border-top:2px solid #58a6ff;width:12px"></div> relates_to</div>
-</div>
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<script>
-(async function() {
-  const res = await fetch("/api/graph");
-  const data = await res.json();
-  const { nodes, edges, node_count, edge_count } = data;
-
-  document.getElementById("stats").textContent = node_count + " \u8282\u70b9 / " + edge_count + " \u8fb9";
-
-  if (!nodes.length) {
-    document.getElementById("stats").textContent = "\u6682\u65e0\u6570\u636e\uff0c\u8bf7\u5148\u8fd0\u884c cdx-brain graph diffuse";
-    return;
-  }
-
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const svg = d3.select("#graph").append("svg").attr("width", width).attr("height", height);
-  const g = svg.append("g");
-
-  const zoom = d3.zoom().scaleExtent([0.1, 4]).on("zoom", (e) => g.attr("transform", e.transform));
-  svg.call(zoom);
-
-  const simulation = d3.forceSimulation(nodes)
-    .force("link", d3.forceLink(edges).id(d => d.id).distance(100).strength(0.3))
-    .force("charge", d3.forceManyBody().strength(-200))
-    .force("center", d3.forceCenter(width / 2, height / 2))
-    .force("collision", d3.forceCollide(30));
-
-  const link = g.append("g").selectAll("line").data(edges).join("line")
-    .attr("stroke", d => d.predicate === "triggers" ? "#30363d" : "#58a6ff")
-    .attr("stroke-width", d => Math.max(1, d.confidence * 3))
-    .attr("stroke-dasharray", d => d.predicate === "triggers" ? "4,4" : "none")
-    .attr("opacity", 0.5);
-
-  const node = g.append("g").selectAll("circle").data(nodes).join("circle")
-    .attr("r", 8)
-    .attr("fill", d => d.group === "policy" ? "#58a6ff" : "#3fb950")
-    .attr("stroke", "#0d1117")
-    .attr("stroke-width", 2)
-    .call(d3.drag()
-      .on("start", (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-      .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
-      .on("end", (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-    );
-
-  const label = g.append("g").selectAll("text").data(nodes).join("text")
-    .text(d => d.label.length > 20 ? d.label.slice(0,20)+"..." : d.label)
-    .attr("class", "node-label")
-    .attr("dx", 12)
-    .attr("dy", 4);
-
-  const tooltip = d3.select("#tooltip");
-  node.on("mouseover", (e, d) => {
-    tooltip.style("display", "block")
-      .style("left", (e.pageX + 12) + "px")
-      .style("top", (e.pageY - 10) + "px");
-    tooltip.select("#tt-label").text(d.label || d.id);
-    tooltip.select("#tt-detail").text("ID: " + d.id + " | " + (d.group || "unknown"));
-  }).on("mouseout", () => tooltip.style("display", "none"));
-
-  simulation.on("tick", () => {
-    link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
-        .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-    node.attr("cx", d => d.x).attr("cy", d => d.y);
-    label.attr("x", d => d.x).attr("y", d => d.y);
-  });
-})();
-</script>
-</body>
-</html>
-"""
 
 if __name__ == "__main__":
     main()

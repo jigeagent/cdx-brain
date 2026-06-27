@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cdx-brain 记忆系统仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+a { color: #58a6ff; text-decoration: none; }
+
+/* Header */
+.header { position: sticky; top: 0; z-index: 100; background: rgba(13,17,23,0.95); border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 16px; backdrop-filter: blur(8px); }
+.header h1 { font-size: 16px; font-weight: 600; }
+.header .subtitle { font-size: 12px; color: #8b949e; }
+.header .version { font-size: 11px; color: #58a6ff; background: rgba(88,166,255,0.1); padding: 2px 8px; border-radius: 10px; }
+
+/* Cards Grid */
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 24px; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; cursor: pointer; transition: border-color .2s, transform .1s; }
+.card:hover { border-color: #58a6ff; transform: translateY(-1px); }
+.card .icon { font-size: 18px; margin-right: 8px; }
+.card .title { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; display: flex; align-items: center; }
+.card .row { display: flex; justify-content: space-between; align-items: baseline; margin: 2px 0; }
+.card .label { font-size: 11px; color: #8b949e; }
+.card .value { font-size: 18px; font-weight: 600; }
+.card .value-sm { font-size: 13px; font-weight: 500; }
+.card .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot-ok { background: #3fb950; }
+.dot-warn { background: #d29922; }
+.dot-err { background: #da3633; }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid #21262d; overflow-x: auto; }
+.tab { padding: 10px 18px; font-size: 13px; color: #8b949e; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: color .2s, border-color .2s; }
+.tab:hover { color: #c9d1d9; }
+.tab.active { color: #f0f6fc; border-bottom-color: #58a6ff; }
+
+/* Panels */
+.panel { display: none; padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+.panel.active { display: block; }
+
+/* Charts */
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+.chart-row-full { grid-template-columns: 1fr; }
+.chart-box { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+.chart-box h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: #f0f6fc; }
+.chart-box .chart-wrap { position: relative; height: 250px; }
+.chart-box .chart-wrap canvas { max-height: 250px; }
+
+/* Activity Timeline */
+.timeline { margin: 12px 0; }
+.tl-item { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+.tl-item:last-child { border: none; }
+.tl-date { width: 60px; color: #8b949e; font-size: 12px; }
+.tl-bar { flex: 1; height: 20px; background: #21262d; border-radius: 4px; overflow: hidden; margin: 0 12px; position: relative; }
+.tl-fill { height: 100%; background: linear-gradient(90deg, #58a6ff, #1f6feb); border-radius: 4px; transition: width .6s ease; }
+.tl-count { width: 30px; text-align: right; font-weight: 500; font-size: 13px; }
+
+/* Task list */
+.task-list { margin: 12px 0; }
+.task-item { display: flex; align-items: center; padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin: 6px 0; gap: 12px; }
+.task-item .ts { font-size: 16px; }
+.task-item .ttl { font-size: 12px; color: #d29922; background: rgba(210,153,34,0.1); padding: 2px 8px; border-radius: 4px; }
+.task-item .block { font-size: 11px; color: #8b949e; }
+
+/* Status items */
+.status-item { display: flex; align-items: center; padding: 8px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin: 4px 0; gap: 10px; font-size: 13px; }
+.status-item .check-label { flex: 1; }
+.status-item .check-msg { color: #8b949e; font-size: 12px; }
+
+/* Search */
+.search-box { display: flex; gap: 8px; margin: 12px 0; }
+.search-box input { flex: 1; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; color: #c9d1d9; font-size: 14px; outline: none; }
+.search-box input:focus { border-color: #58a6ff; }
+.search-box button { background: #238636; color: #fff; border: none; border-radius: 6px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
+.search-box button:hover { background: #2ea043; }
+
+.search-result { padding: 10px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin: 6px 0; font-size: 13px; line-height: 1.5; }
+.search-result .src { font-size: 11px; color: #8b949e; display: inline-block; padding: 1px 6px; border-radius: 4px; margin-right: 6px; }
+.src-local { background: rgba(88,166,255,0.15); color: #58a6ff; }
+.src-counterfactual { background: rgba(210,153,34,0.15); color: #d29922; }
+.search-sources { display: flex; gap: 16px; margin: 12px 0; font-size: 13px; }
+
+/* Capability Map */
+.cap-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
+.cap-item { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; text-align: center; }
+.cap-item .cap-icon { font-size: 24px; margin-bottom: 4px; }
+.cap-item .cap-name { font-size: 12px; font-weight: 500; }
+.cap-item .cap-status { font-size: 11px; margin-top: 4px; }
+.cap-active { border-color: #3fb950; }
+.cap-idle { border-color: #30363d; opacity: 0.6; }
+
+/* Empty state */
+.empty { text-align: center; padding: 48px; color: #8b949e; }
+.empty .big-icon { font-size: 48px; margin-bottom: 12px; }
+.empty p { font-size: 14px; line-height: 1.6; }
+
+/* Overview layout */
+.overview-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .cards { grid-template-columns: repeat(2, 1fr); }
+  .chart-row { grid-template-columns: 1fr; }
+  .cap-grid { grid-template-columns: repeat(2, 1fr); }
+  .overview-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🧠 cdx-brain 记忆系统仪表盘</h1>
+  <span class="version">v0.9.0</span>
+  <span class="subtitle" id="header-time">正在加载...</span>
+</div>
+
+<!-- 8 Overview Cards -->
+<div class="cards" id="cardGrid"></div>
+
+<!-- Tabs -->
+<div class="tabs" id="tabBar"></div>
+
+<!-- Panels -->
+<div id="panelContainer"></div>
+
+<script>
+// ── State ──
+const TABS = [
+  { id: "overview", label: "📊 总览" },
+  { id: "cf", label: "⛔ 反事实" },
+  { id: "tasks", label: "📋 任务森林" },
+  { id: "pipeline", label: "🧠 认知" },
+  { id: "graph", label: "🔗 图谱" },
+  { id: "search", label: "🔍 检索" },
+  { id: "health", label: "❤️ 健康" },
+];
+
+let activeTab = "overview";
+let dashboardData = null;
+let cfTimelineData = null;
+let mermaidData = null;
+let activityData = null;
+
+// ── Chart.js defaults ──
+Chart.defaults.color = "#8b949e";
+Chart.defaults.borderColor = "#30363d";
+
+// ── Card Config ──
+const CARDS = [
+  { id: "memory", icon: "🗃️", title: "热记忆", tab: "overview",
+    fields: [
+      { key: "traces", label: "Traces", fmt: v => v.toLocaleString() },
+      { key: "synced", label: "已同步", fmt: v => v.toLocaleString() },
+      { key: "new_this_week", label: "本周新增", fmt: v => `+${v}` },
+    ]},
+  { id: "pipeline", icon: "🧠", title: "认知管线", tab: "pipeline",
+    fields: [
+      { key: "policies", label: "Policies" },
+      { key: "skills", label: "Skills" },
+      { key: "concepts", label: "Concepts" },
+    ]},
+  { id: "graph", icon: "🔗", title: "知识图谱", tab: "graph",
+    fields: [
+      { key: "triples", label: "三元组" },
+    ]},
+  { id: "cf", icon: "⛔", title: "反事实记忆", tab: "cf",
+    fields: [
+      { key: "total", label: "总数" },
+      { key: "this_month", label: "本月放弃" },
+      { key: "convergence", label: "收敛趋势", fmt: v => ({exploring:"🔍探索", converging:"🟢收敛中", converged:"✅已收敛", no_data:"—"}[v]||v) },
+    ]},
+  { id: "tasks", icon: "📋", title: "任务森林", tab: "tasks",
+    fields: [
+      { key: "active", label: "活跃" },
+      { key: "blocked", label: "阻塞" },
+      { key: "done", label: "已完成" },
+    ]},
+  { id: "sentinel", icon: "❤️", title: "系统健康", tab: "health",
+    fields: [
+      { key: "status", label: "状态", fmt: v => ({ok:"🟢正常", warning:"🟡警告", error:"🔴异常", critical:"🔴严重"}[v]||v) },
+      { key: null, label: "cache", dyn: d => `${d.memory.cache_mb}MB` },
+      { key: "timestamp", label: "上次巡检", fmt: v => v ? v.slice(11,19) : "—" },
+    ]},
+  { id: "promote", icon: "🏆", title: "晋升门控", tab: "pipeline",
+    fields: [
+      { key: "total", label: "晋升" },
+    ]},
+  { id: "ov", icon: "🌐", title: "OV 联邦", tab: "overview",
+    fields: [
+      { key: null, label: "状态", dyn: () => "本地模式" },
+    ]},
+];
+
+// ── Data Loading ──
+async function loadAll() {
+  try {
+    const res = await fetch("/api/dashboard");
+    dashboardData = await res.json();
+    renderCards();
+    renderActivePanel();
+  } catch(e) {
+    document.getElementById("cardGrid").innerHTML = `<div class="empty"><p>⚠️ 无法连接到 cdx-brain 后端</p></div>`;
+  }
+}
+
+// ── Cards ──
+function renderCards() {
+  if (!dashboardData) return;
+  const d = dashboardData;
+  let html = "";
+  for (const card of CARDS) {
+    const data = d[card.id] || {};
+    let statusDot = "";
+    if (data.status) {
+      const cls = {ok:"dot-ok", warning:"dot-warn", error:"dot-err", critical:"dot-err"}[data.status] || "";
+      statusDot = `<span class="status-dot ${cls}"></span>`;
+    }
+    html += `<div class="card" onclick="switchTab('${card.tab}')">
+      <div class="title">${statusDot}${card.icon} ${card.title}</div>`;
+    for (const f of card.fields) {
+      let val = f.dyn ? f.dyn(d) : (f.key ? data[f.key] : null);
+      if (val === null || val === undefined) val = "—";
+      if (f.fmt) val = f.fmt(val);
+      html += `<div class="row"><span class="label">${f.label}</span><span class="value-sm">${val}</span></div>`;
+    }
+    html += `</div>`;
+  }
+  document.getElementById("cardGrid").innerHTML = html;
+  document.getElementById("header-time").textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN")}`;
+}
+
+// ── Tabs ──
+function initTabs() {
+  let html = "";
+  for (const t of TABS) {
+    html += `<div class="tab${t.id===activeTab?" active":""}" onclick="switchTab('${t.id}')" data-tab="${t.id}">${t.label}</div>`;
+  }
+  document.getElementById("tabBar").innerHTML = html;
+}
+
+function switchTab(tabId) {
+  activeTab = tabId;
+  document.querySelectorAll(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === tabId));
+  renderActivePanel();
+}
+
+function renderActivePanel() {
+  const container = document.getElementById("panelContainer");
+  if (!dashboardData) { container.innerHTML = '<div class="empty"><p>加载中...</p></div>'; return; }
+  const d = dashboardData;
+  const tabs = {
+    overview: () => renderOverview(d),
+    cf: () => renderCF(d),
+    tasks: () => renderTasks(d),
+    pipeline: () => renderPipeline(d),
+    graph: () => renderGraph(),
+    search: () => renderSearch(d),
+    health: () => renderHealth(d),
+  };
+  container.innerHTML = (tabs[activeTab] || (() => ""))();
+}
+
+// ══════════════════════════════════════════
+//  Overview Panel
+// ══════════════════════════════════════════
+function renderOverview(d) {
+  return `<h2 style="font-size:16px;margin-bottom:8px;">📊 系统总览</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px;">各子系统当前状态一览</p>
+    <div class="cap-grid">
+      ${renderCap("🗃️","热记忆", d.memory.traces>0)}
+      ${renderCap("🧠","认知管线", d.pipeline.policies>0)}
+      ${renderCap("🔗","知识图谱", d.graph.triples>0)}
+      ${renderCap("⛔","反事实", d.cf.total>0)}
+      ${renderCap("📋","任务森林", d.tasks.total>0)}
+      ${renderCap("🌐","OV联邦", true)}
+      ${renderCap("🏆","晋升门控", false)}
+      ${renderCap("❤️","系统健康", true)}
+    </div>
+    <div class="chart-box" style="margin-top:16px;">
+      <h3>📅 本周记忆活动</h3>
+      <div id="activityTimeline"><div class="empty"><p>加载中...</p></div></div>
+    </div>`;
+}
+
+function renderCap(icon, name, active) {
+  return `<div class="cap-item ${active?'cap-active':'cap-idle'}">
+    <div class="cap-icon">${icon}</div>
+    <div class="cap-name">${name}</div>
+    <div class="cap-status" style="color:${active?'#3fb950':'#8b949e'}">${active?'运行中':'待启动'}</div>
+  </div>`;
+}
+
+// ══════════════════════════════════════════
+//  CF Panel
+// ══════════════════════════════════════════
+async function renderCF(d) {
+  if (d.cf.total === 0) {
+    return `<div class="empty"><div class="big-icon">⛔</div><p>暂无反事实记忆数据。<br>当对话中检测到"放弃方案/否决方向"等模式时，反事实会自动记录。</p></div>`;
+  }
+  // Load timeline data
+  let timelineHtml = '<div class="empty"><p>加载图表中...</p></div>';
+  try {
+    const res = await fetch("/api/cf/timeline?months=6");
+    cfTimelineData = await res.json();
+    timelineHtml = `<div class="chart-row">
+      <div class="chart-box"><h3>📊 放弃方案月度分布</h3><div class="chart-wrap"><canvas id="cfStackChart"></canvas></div></div>
+      <div class="chart-box"><h3>📈 判断收敛趋势</h3><div class="chart-wrap"><canvas id="cfHhiChart"></canvas></div></div>
+    </div>`;
+  } catch(e) {}
+
+  const topSubject = d.cf.top_subject || "—";
+  const convLabel = {exploring:"🔍 探索期", converging:"🟢 收敛中", converged:"✅ 已收敛", no_data:"—"}[d.cf.convergence] || "—";
+
+  return `<h2 style="font-size:16px;margin-bottom:4px;">⛔ 反事实记忆 · 判断收敛</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:4px;">
+      共 ${d.cf.total} 条 · 本月放弃 ${d.cf.this_month} · 
+      集中在 <strong style="color:#f0f6fc;">${topSubject}</strong> · 
+      趋势: <strong style="color:#f0f6fc;">${convLabel}</strong>
+    </p>
+    <p style="color:#8b949e;font-size:12px;margin-bottom:16px;">
+      收敛指数越高→放弃方案越集中在少数领域→团队判断偏好在稳定
+    </p>
+    ${timelineHtml}
+    <div class="chart-row chart-row-full" id="cfRejectedChartRow"></div>`;
+}
+
+// ══════════════════════════════════════════
+//  Tasks Panel
+// ══════════════════════════════════════════
+async function renderTasks(d) {
+  const hasTasks = d.tasks.total > 0;
+  if (!hasTasks) {
+    return `<div class="empty"><div class="big-icon">📋</div><p>暂无任务数据。<br>使用 <code>cdx-brain task add</code> 创建任务，或让 Agent 在对话中自动检测。</p></div>`;
+  }
+  let listHtml = '<div class="empty"><p>加载中...</p></div>';
+  let mermaidHtml = '';
+  try {
+    const res = await fetch("/api/tasks/data");
+    const td = await res.json();
+    if (td.active_list && td.active_list.length > 0) {
+      listHtml = '<div class="task-list">';
+      for (const t of td.active_list) {
+        const icon = {open:"🟢", in_progress:"🔵", blocked:"🔴", done:"✅", cancelled:"⚪"}[t.status] || "⚪";
+        let ttlHtml = t.ttl_days !== null ? `<span class="ttl">⏳ ${t.ttl_days}d</span>` : '';
+        let blockHtml = t.blocked_by.length > 0 ? `<div class="block">阻塞于: ${t.blocked_by.join(", ")}</div>` : '';
+        listHtml += `<div class="task-item"><span class="ts">${icon}</span>
+          <strong>${t.title}</strong> <span style="color:#8b949e;font-size:12px;">${t.status}</span>
+          ${ttlHtml}${blockHtml}</div>`;
+      }
+      listHtml += '</div>';
+    } else {
+      listHtml = '<div class="empty"><p>无活跃任务</p></div>';
+    }
+
+    const mRes = await fetch("/api/tasks/mermaid");
+    const md = await mRes.json();
+    if (md.mermaid && !md.mermaid.includes("No tasks")) {
+      mermaidHtml = `<div class="chart-box" style="margin-top:16px;"><h3>🔀 DAG 可视化</h3>
+        <pre style="font-size:11px;color:#8b949e;overflow-x:auto;padding:12px;background:#0d1117;border-radius:4px;max-height:300px;">${md.mermaid.replace(/\\n/g,'\n')}</pre></div>`;
+    }
+  } catch(e) {}
+
+  const bs = d.tasks.by_status || {};
+  return `<h2 style="font-size:16px;margin-bottom:4px;">📋 任务森林 · 进度总览</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px;">
+      总计 ${d.tasks.total} · 活跃 ${d.tasks.active} · 阻塞 ${d.tasks.blocked} · 完成 ${d.tasks.done}
+    </p>
+    ${listHtml}
+    ${mermaidHtml}`;
+}
+
+// ══════════════════════════════════════════
+//  Pipeline Panel
+// ══════════════════════════════════════════
+async function renderPipeline(d) {
+  let pipeHtml = '<div class="empty"><p>认知管线尚未积累数据。<br>随着对话进行，policies/skills/concepts 会自动归纳。</p></div>';
+  try {
+    const res = await fetch("/api/pipeline");
+    const pd = await res.json();
+    const policies = pd.policies || [];
+    const skills = pd.skills || [];
+    const concepts = pd.concepts || [];
+
+    if (policies.length > 0 || skills.length > 0) {
+      let html = `<div class="chart-box" style="margin-bottom:16px;"><h3>🏆 晋升门控 · Promote Gate</h3>
+        <p style="font-size:12px;color:#8b949e;">
+          hard score + diversity penalty 自动筛选。高频高质内容晋升，相似内容去重。
+        </p></div>`;
+      if (policies.length > 0) {
+        html += `<div class="chart-box" style="margin-bottom:12px;"><h3>📄 Policies（${policies.length}）</h3>`;
+        for (const p of policies.slice(0,10)) {
+          html += `<div class="status-item"><span>📄</span><span class="check-label"><strong>${p.name||"?"}</strong>
+            <span style="color:#8b949e;font-size:12px;margin-left:8px;">触发: ${(p.trigger_pattern||"")||"—"}</span></span>
+            <span style="color:#d29922;">${p.score ? `⭐${p.score.toFixed(1)}` : ''}</span></div>`;
+        }
+        html += `</div>`;
+      }
+      if (skills.length > 0) {
+        html += `<div class="chart-box"><h3>💎 Skills（${skills.length}）</h3>`;
+        for (const s of skills.slice(0,5)) {
+          html += `<div class="status-item"><span>💎</span><span class="check-label"><strong>${s.name||"?"}</strong>
+            <span style="color:#8b949e;font-size:12px;margin-left:8px;">${(s.description||"")||""}</span></span></div>`;
+        }
+        html += `</div>`;
+      }
+      pipeHtml = html;
+    }
+  } catch(e) {}
+  return `<h2 style="font-size:16px;margin-bottom:8px;">🧠 认知管线</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px;">
+      L1 Capture → L2 Induction → L3 World Model → L4 Strategy → L5 Skill Crystallization
+    </p>
+    ${pipeHtml}`;
+}
+
+// ══════════════════════════════════════════
+//  Graph Panel (link to existing)
+// ══════════════════════════════════════════
+function renderGraph() {
+  return `<h2 style="font-size:16px;margin-bottom:8px;">🔗 知识图谱</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px;">
+      使用 D3 force-directed graph 展示认知策略间的触发/关联关系。
+      <a href="/graph.html" target="_blank">打开全屏图谱 →</a>
+    </p>
+    <div class="chart-box" style="text-align:center;">
+      <div style="padding:48px;color:#8b949e;">
+        <div style="font-size:48px;margin-bottom:12px;">🔗</div>
+        <p>${dashboardData?.graph?.triples||0} 个三元组</p>
+        <p style="font-size:12px;margin-top:8px;"><a href="/graph.html" target="_blank">点击进入全屏交互图谱</a></p>
+      </div>
+    </div>`;
+}
+
+// ══════════════════════════════════════════
+//  Search Panel
+// ══════════════════════════════════════════
+function renderSearch() {
+  return `<h2 style="font-size:16px;margin-bottom:8px;">🔍 全局记忆检索</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px;">
+      RRF 六源融合检索：对话记忆 + 核心记忆 + OpenViking + 反事实 + 认知 + 联邦
+    </p>
+    <div class="search-box">
+      <input id="searchInput" placeholder="输入搜索关键词..." onkeydown="if(event.key==='Enter') doSearch()">
+      <button onclick="doSearch()">搜索</button>
+    </div>
+    <div id="searchResults"></div>`;
+}
+
+async function doSearch() {
+  const q = document.getElementById("searchInput").value.trim();
+  const container = document.getElementById("searchResults");
+  if (!q) { container.innerHTML = ''; return; }
+  container.innerHTML = '<div class="empty"><p>搜索中...</p></div>';
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    if (!data.results || data.results.length === 0) {
+      container.innerHTML = '<div class="empty"><p>未找到匹配结果</p></div>';
+      return;
+    }
+    let html = `<div class="search-sources">`;
+    for (const [src, count] of Object.entries(data.sources)) {
+      const cls = {local:"src-local", counterfactual:"src-counterfactual"}[src] || "";
+      html += `<span><span class="src ${cls}">${src}</span>${count}</span>`;
+    }
+    html += `</div>`;
+    for (const r of data.results) {
+      const cls = {local:"src-local", counterfactual:"src-counterfactual"}[r.source] || "";
+      html += `<div class="search-result">
+        <span class="src ${cls}">${r.source}</span>
+        ${r.text}
+        <div style="color:#8b949e;font-size:11px;margin-top:4px;">${r.date||''} ${r.session_id ? '| '+r.session_id : ''}</div>
+      </div>`;
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div class="empty"><p>搜索出错: ${e.message}</p></div>`;
+  }
+}
+
+// ══════════════════════════════════════════
+//  Health Panel
+// ══════════════════════════════════════════
+function renderHealth(d) {
+  const s = d.sentinel;
+  const statusIcons = {ok:"🟢", warning:"🟡", error:"🔴", critical:"🔴"};
+  const statusIcon = statusIcons[s.status] || "⚪";
+  const checks = s.checks || {};
+  let checksHtml = '';
+  if (Object.keys(checks).length > 0) {
+    checksHtml = '<h3 style="font-size:13px;margin:12px 0 8px;">🔍 Quick Check 结果</h3>';
+    for (const [name, c] of Object.entries(checks)) {
+      const icon = {ok:"✅", warning:"⚠️", error:"❌", critical:"🚨"}[c.status] || "❓";
+      checksHtml += `<div class="status-item"><span>${icon}</span>
+        <span class="check-label">${name}</span>
+        <span class="check-msg">${c.message||''}</span></div>`;
+    }
+  }
+
+  return `<h2 style="font-size:16px;margin-bottom:4px;">❤️ 记忆系统健康</h2>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px;">
+      状态: <strong>${statusIcon} ${s.status||'未知'}</strong>
+      ${s.timestamp ? ' · 上次巡检: ' + s.timestamp.slice(11,19) : ''}
+    </p>
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>📊 记忆系统综合指标</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:8px 0;">
+          <div><div style="font-size:24px;font-weight:600;">${d.memory.traces.toLocaleString()}</div><div style="font-size:12px;color:#8b949e;">Traces</div></div>
+          <div><div style="font-size:24px;font-weight:600;">${d.cf.total}</div><div style="font-size:12px;color:#8b949e;">反事实</div></div>
+          <div><div style="font-size:24px;font-weight:600;">${d.memory.cache_mb}MB</div><div style="font-size:12px;color:#8b949e;">cache.db</div></div>
+          <div><div style="font-size:24px;font-weight:600;">${d.tasks.total}</div><div style="font-size:12px;color:#8b949e;">任务</div></div>
+        </div>
+      </div>
+      <div class="chart-box">
+        <h3>💾 缓存大小趋势</h3>
+        <div class="chart-wrap"><canvas id="healthChart"></canvas></div>
+      </div>
+    </div>
+    ${checksHtml}`;
+}
+
+// ══════════════════════════════════════════
+//  Chart Drawing (after panel render)
+// ══════════════════════════════════════════
+async function drawCharts() {
+  // CF Charts
+  if (cfTimelineData && cfTimelineData.length > 0) {
+    const labels = cfTimelineData.map(d => d.month);
+    const totals = cfTimelineData.map(d => d.total);
+    const hhis = cfTimelineData.map(d => d.hhi);
+
+    // Stacked bar: collect all subjects across months
+    const allSubjects = new Set();
+    cfTimelineData.forEach(d => Object.keys(d.by_subject).forEach(s => allSubjects.add(s)));
+    const subjectColors = ["#58a6ff","#3fb950","#d29922","#da3633","#bc8cff","#f0883e","#79c0ff","#a5d6ff"];
+    const subjectList = Array.from(allSubjects).slice(0,8);
+
+    // Create stack datasets
+    const stackDatasets = subjectList.map((subj, i) => ({
+      label: subj,
+      data: cfTimelineData.map(d => d.by_subject[subj] || 0),
+      backgroundColor: subjectColors[i % subjectColors.length],
+    }));
+
+    new Chart(document.getElementById("cfStackChart"), {
+      type: "bar",
+      data: { labels, datasets: stackDatasets },
+      options: { responsive: true, maintainAspectRatio: false,
+        scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12, padding: 8, font: {size: 10} } } }
+      }
+    });
+
+    // HHI convergence line
+    new Chart(document.getElementById("cfHhiChart"), {
+      type: "line",
+      data: { labels, datasets: [{
+        label: "收敛指数 (HHI)",
+        data: hhis,
+        borderColor: "#58a6ff",
+        backgroundColor: "rgba(88,166,255,0.1)",
+        fill: true,
+        tension: 0.3,
+        pointBackgroundColor: hhis.map(v => v > 0.6 ? "#3fb950" : v > 0.3 ? "#d29922" : "#58a6ff"),
+      }]},
+      options: { responsive: true, maintainAspectRatio: false,
+        scales: { y: { min: 0, max: 1, ticks: { callback: v => ({0:"分散",0.3:"探索",0.6:"收敛",1:"集中"}[v]||v) } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  // Health: cache size history
+  const ctx = document.getElementById("healthChart");
+  if (ctx) {
+    new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: ["当前"],
+        datasets: [{ label: "cache (MB)", data: [dashboardData?.memory?.cache_mb || 0], borderColor: "#3fb950" }]
+      },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  // Activity timeline
+  const activityDiv = document.getElementById("activityTimeline");
+  if (activityDiv) {
+    try {
+      const res = await fetch("/api/activity?days=7");
+      activityData = await res.json();
+      if (activityData.length > 0) {
+        const maxVal = Math.max(...activityData.map(d => d.traces), 1);
+        let html = '<div class="timeline">';
+        for (const d of activityData) {
+          const pct = (d.traces / maxVal * 100).toFixed(0);
+          html += `<div class="tl-item">
+            <span class="tl-date">${d.date.slice(5)}</span>
+            <div class="tl-bar"><div class="tl-fill" style="width:${pct}%"></div></div>
+            <span class="tl-count">${d.traces}</span>
+          </div>`;
+        }
+        html += '</div>';
+        activityDiv.innerHTML = html;
+      } else {
+        activityDiv.innerHTML = '<div class="empty"><p>本周暂无活动</p></div>';
+      }
+    } catch(e) {
+      activityDiv.innerHTML = '<div class="empty"><p>加载失败</p></div>';
+    }
+  }
+}
+
+// ── Initialization ──
+// Keep a reference to chart instances
+const chartInstances = [];
+
+// Override renderActivePanel to trigger chart drawing
+const origRender = renderActivePanel;
+renderActivePanel = function() {
+  const container = document.getElementById("panelContainer");
+  if (!dashboardData) { container.innerHTML = '<div class="empty"><p>加载中...</p></div>'; return; }
+  const d = dashboardData;
+  const tabs = {
+    overview: () => renderOverview(d),
+    cf: () => renderCF(d),
+    tasks: () => renderTasks(d),
+    pipeline: () => renderPipeline(d),
+    graph: () => renderGraph(),
+    search: () => renderSearch(d),
+    health: () => renderHealth(d),
+  };
+  container.innerHTML = (tabs[activeTab] || (() => ""))();
+  // Draw charts after DOM update
+  setTimeout(drawCharts, 100);
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  initTabs();
+  loadAll();
+  // Auto-refresh every 60s
+  setInterval(loadAll, 60000);
+});
+</script>
+</body>
+</html>
