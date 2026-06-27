@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cdx_brain.cache.connection import CacheConnection
+from cdx_brain.counterfactual.store import ensure_counterfactual_schema
 
 
 def ensure_schema(conn_or_cache: CacheConnection) -> None:
@@ -86,6 +87,8 @@ def ensure_schema(conn_or_cache: CacheConnection) -> None:
         END;
     """)
     conn.commit()
+    ensure_counterfactual_schema(conn)
+
 
 
 
@@ -97,6 +100,7 @@ def ensure_decay_migration(conn_or_cache) -> None:
     try:
         conn.execute("ALTER TABLE traces ADD COLUMN cold INTEGER NOT NULL DEFAULT 0")
         conn.commit()
+
     except Exception:
         pass  # Column already exists
 
@@ -110,3 +114,4 @@ def drop_schema(conn_or_cache: CacheConnection) -> None:
         DROP TABLE IF EXISTS traces;
     """)
     conn.commit()
+

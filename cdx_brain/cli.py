@@ -22,6 +22,14 @@ if hasattr(sys.stdout, "buffer"):
 from cdx_brain.cache.connection import CacheConnection
 from cdx_brain.cache.schema import ensure_schema
 from cdx_brain.cache.traces import TraceRepository
+from cdx_brain.task_forest.forest import TaskForest
+from cdx_brain.task_forest.profile import load_profile, save_profile, UserProfile
+from cdx_brain.sentinel.scout import run_quick_check, run_deep_check, format_report
+from cdx_brain.sentinel.report import generate_and_save, get_latest
+from cdx_brain.counterfactual.store import (
+    ensure_counterfactual_schema, search_counterfactuals,
+    list_counterfactuals, count_counterfactuals,
+)
 
 from cdx_brain import __version__
 from cdx_brain.config import ConfigManager
@@ -595,6 +603,51 @@ def main() -> None:
 
     # promote
     promote_p = sub.add_parser("promote", help="Run memory maintenance (cache limit, dedup, hot promote)")
+
+    cf_p = sub.add_parser("cf", help="反事实记忆")
+
+    task_p = sub.add_parser("task", help="任务森林：跨会话任务 DAG 管理")
+    task_sub = task_p.add_subparsers(dest="task_command", required=True)
+    task_add = task_sub.add_parser("add", help="新建任务")
+    task_add.add_argument("title", help="任务标题")
+    task_add.add_argument("--desc", default="", help="任务描述")
+    task_add.add_argument("--parent", default="", help="父任务ID")
+    task_add.add_argument("--tags", default="", help="标签（逗号分隔）")
+    task_status = task_sub.add_parser("status", help="更新任务状态")
+    task_status.add_argument("id", help="任务ID")
+    task_status.add_argument("status", choices=["open","in_progress","blocked","done","cancelled"])
+    task_block = task_sub.add_parser("block", help="标注阻塞")
+    task_block.add_argument("id", help="任务ID")
+    task_block.add_argument("reason", help="阻塞原因")
+    task_list = task_sub.add_parser("list", help="列出活跃任务")
+    task_graph = task_sub.add_parser("graph", help="Mermaid DAG 可视化")
+    task_prune = task_sub.add_parser("prune", help="清理超时阻塞任务")
+    task_stats = task_sub.add_parser("stats", help="任务统计")
+    profile_p = task_sub.add_parser("profile", help="查看/更新用户画像")
+    profile_p.add_argument("--key", default="", help="字段名")
+    profile_p.add_argument("--value", default="", help="字段值")
+    profile_p.add_argument("--list", dest="list_field", default="", help="列表字段追加值")
+    sentinel_p = sub.add_parser("sentinel", help="哨兵监控：记忆系统健康巡检")
+    sentinel_sub = sentinel_p.add_subparsers(dest="sentinel_command", required=True)
+    sentinel_quick = sentinel_sub.add_parser("quick", help="快速巡检（<3秒）")
+    sentinel_deep = sentinel_sub.add_parser("deep", help="深度巡检（含VACUUM自动修复）")
+    sentinel_status = sentinel_sub.add_parser("status", help="查看最近一次巡检报告")
+    cf_sub = cf_p.add_subparsers(dest="cf_command", required=True)
+    cf_add = cf_sub.add_parser("add", help="手动记录")
+    cf_add.add_argument("--subject", required=True)
+    cf_add.add_argument("--rejected", required=True)
+    cf_add.add_argument("--chosen", default="")
+    cf_add.add_argument("--reason", default="")
+    cf_add.add_argument("--decider", default="")
+    cf_add.add_argument("--session", default="")
+    cf_add.add_argument("--confidence", type=float, default=0.7)
+    cf_list = cf_sub.add_parser("list", help="列出")
+    cf_list.add_argument("--subject", default="")
+    cf_list.add_argument("--limit", type=int, default=20)
+    cf_search = cf_sub.add_parser("search", help="搜索")
+    cf_search.add_argument("query")
+    cf_search.add_argument("--limit", type=int, default=5)
+    cf_stats = cf_sub.add_parser("stats", help="统计")
     
 
     # decay
@@ -626,6 +679,47 @@ def main() -> None:
     graph_sub.add_parser("diffuse", help="Run relation extraction on existing data")
 
     args = parser.parse_args()
+
+    if args.command == "sentinel":
+        if args.sentinel_command == "quick":
+            result = generate_and_save(deep=False)
+            print(format_report(result["report"]))
+            print("\nReport saved: " + result["json_path"])
+        elif args.sentinel_command == "deep":
+            result = generate_and_save(deep=True)
+            print(format_report(result["report"]))
+            print("\nReport saved: " + result["json_path"])
+        elif args.sentinel_command == "status":
+            report = get_latest()
+            if report:
+                print(format_report(report))
+            else:
+                print("No scout reports found. Run 'cdx-brain sentinel quick' first.")
+        return
+
+    if args.command == "cf":
+        dbpath = str(_get_config_manager().data_dir / "cache.db")
+        cache = CacheConnection(dbpath)
+        ensure_counterfactual_schema(cache)
+        if args.cf_command == "add":
+            from cdx_brain.counterfactual.log import log_counterfactual
+            data = {"subject":args.subject,"rejected":args.rejected,
+                "chosen":args.chosen,"reason":args.reason,
+                "decided_by":args.decider,"source_session":args.session,
+                "confidence":args.confidence}
+            ok = log_counterfactual(cache, data)
+            print("OK" if ok else "FAIL")
+        elif args.cf_command == "list":
+            for r in list_counterfactuals(cache, args.subject, args.limit):
+                print("%s [%s] %s" % (r["id"][:12], r.get("subject","?"), (r.get("rejected","") or "")[:40]))
+        elif args.cf_command == "search":
+            for k, r in enumerate(search_counterfactuals(cache, args.query, args.limit), 1):
+                print("#%d [%s] %s" % (k, r.get("subject","?"), (r.get("rejected","") or "")[:40]))
+        elif args.cf_command == "stats":
+            s = count_counterfactuals(cache)
+            print("total: %d" % s["total"])
+        cache.close_all()
+        return
 
     # Dispatch
     if args.command == "init":
