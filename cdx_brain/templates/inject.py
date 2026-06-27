@@ -279,6 +279,23 @@ def search_ov(query: str, limit: int = 8) -> list[dict]:
     return results
 
 
+# ── Source: Counterfactual memories (Phase 4.1) ──
+
+
+def search_counterfactuals(query: str, limit: int = 5) -> list[dict]:
+    """Search counterfactual memories."""
+    from cdx_brain.counterfactual.store import ensure_counterfactual_schema, search_counterfactuals as _cf_search
+    try:
+        ensure_counterfactual_schema(cache)
+        results = _cf_search(cache, query, limit=limit)
+        for r in results:
+            r["source"] = "counterfactual"
+        return results
+    except Exception as e:
+        print(f"[inject] counterfactual search error: {e}", file=sys.stderr)
+        return []
+
+
 def format_memory_block(m: dict) -> str:
     """Format a single memory as text block for additionalContext."""
     src_label = {"local": "对话记忆", "native": "核心记忆", "ov": "共享记忆", "codex_ext": "Codex记忆"}.get(m["source"], m["source"])
@@ -320,10 +337,11 @@ def main() -> None:
     ov_results = search_ov(prompt, limit=8)
     federated_results = search_federated(prompt, limit=3)
     cognitive_results = search_cognitive(prompt, limit=3)
+    cf_results = search_counterfactuals(prompt, limit=3)
     elapsed = time.time() - t0
 
     # Merge via RRF
-    merged = rrf_merge([local_results, native_results, codex_results, ov_results, cognitive_results, federated_results], k=60)
+    merged = rrf_merge([local_results, native_results, codex_results, ov_results, cf_results, cognitive_results, federated_results], k=60)
     merged = merged[:MAX_MEMORIES]
 
     if not merged:
@@ -343,12 +361,13 @@ def main() -> None:
     native_n = sum(1 for m in merged if m["source"] == "native")
     codex_n = sum(1 for m in merged if m["source"] == "codex_ext")
     ov_n = sum(1 for m in merged if m["source"] == "ov")
+    cf_n = sum(1 for m in merged if m["source"] == "counterfactual")
 
     output = {
         "additionalContext": context,
         "systemMessage": (
             f"{total} memories injected "
-            f"(FTS5:{local_n} 核心:{native_n} OV:{ov_n} {elapsed:.1f}s)"
+            f"(FTS5:{local_n} 核心:{native_n} OV:{ov_n} CF:{cf_n} {elapsed:.1f}s)"
         ),
     }
 

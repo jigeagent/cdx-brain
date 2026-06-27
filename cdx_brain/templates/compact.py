@@ -47,12 +47,12 @@ MEMORY_PATH = os.path.expanduser(
 MEMORY_FILE = Path(MEMORY_PATH) if MEMORY_PATH else None
 
 STATUS_PATH = os.path.expanduser(
-    _resolve("memory.status_path", "CDX_BRAIN_STATUS_PATH", "D:\WorkBuddy\STATUS.md")
+    _resolve("memory.status_path", "CDX_BRAIN_STATUS_PATH", "D:\\WorkBuddy\\STATUS.md")
 )
 STATUS_FILE = Path(STATUS_PATH) if STATUS_PATH else Path(os.path.expanduser("~/STATUS.md"))
 
 SNAPSHOT_PATH = os.path.expanduser(
-    _resolve("memory.snapshot_path", "CDX_BRAIN_SNAPSHOT_PATH", "D:\WorkBuddy\workspace\_snapshot.md")
+    _resolve("memory.snapshot_path", "CDX_BRAIN_SNAPSHOT_PATH", "D:\\WorkBuddy\\workspace\\_snapshot.md")
 )
 SNAPSHOT_FILE = Path(SNAPSHOT_PATH) if SNAPSHOT_PATH else Path(os.path.expanduser("~/_openviking_snapshot.md"))
 
@@ -165,6 +165,16 @@ def do_restore() -> None:
     if context_parts:
         output = {"additionalContext": context_parts}
         json.dump(output, sys.stdout, ensure_ascii=False)
+
+    # Phase 4.2: Sentinel quick check after restore
+    try:
+        from cdx_brain.sentinel.scout import run_quick_check
+        qc = run_quick_check()
+        issues = [f"{k}={v.get("status","?")}" for k,v in qc.get("checks",{}).items() if v.get("status") not in ("ok",)]
+        if issues:
+            sys.stderr.write(f"[compact] sentinel issues: {", ".join(issues)}\n")
+    except Exception:
+        pass
 
 
 # -- Entry ----------------------------------------------------

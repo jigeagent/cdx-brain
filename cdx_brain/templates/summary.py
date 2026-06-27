@@ -215,6 +215,15 @@ def main() -> None:
     except Exception as e:
         print(f"[summary] sync error: {e}", file=sys.stderr)
 
+    # Phase 4.2: Sentinel quick check at session end
+    try:
+        from cdx_brain.sentinel.scout import run_quick_check
+        qc = run_quick_check()
+        issues = [f"{k}={v.get("status","?")}" for k,v in qc.get("checks",{}).items() if v.get("status") not in ("ok",)]
+        if issues:
+            sys.stderr.write(f"[summary] sentinel: {'; '.join(issues)}\n")
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

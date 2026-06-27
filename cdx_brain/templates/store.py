@@ -433,6 +433,17 @@ def main() -> None:
     # Memory promotion (best-effort, after main storage)
     _do_promote(user_content, assistant_content)
 
+    # Phase 4.1: Auto-extract counterfactuals from rejection patterns
+    try:
+        from cdx_brain.counterfactual.log import extract_counterfactual_from_text, log_counterfactual
+        cf = extract_counterfactual_from_text(assistant_content, session_id=session_id, decider='hook-store')
+        if cf:
+            ok = log_counterfactual(cache, cf)
+            if ok:
+                print(f"[store] cf logged: {cf.get('subject','?')} -> {cf.get('rejected','?')}", file=sys.stderr)
+    except Exception as e:
+        print(f'[store] counterfactual error: {e}', file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()
