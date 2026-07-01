@@ -444,6 +444,36 @@ def main() -> None:
     except Exception as e:
         print(f'[store] counterfactual error: {e}', file=sys.stderr)
 
+    # Hot.md — cross-session working state snapshot
+    _write_hot(user_content, assistant_content, session_id)
+    # Pattern counter — auto-detect repeated behavioral patterns
+    try:
+        from cdx_brain.hot_counter import process_text
+        promoted = process_text(user_content)
+        if promoted:
+            for p in promoted:
+                print(f"[store] pattern promoted: {p.pattern}", file=sys.stderr)
+    except Exception:
+        pass
 
+
+def _write_hot(user_content: str, assistant_content: str, session_id: str) -> None:
+    """Best-effort write of hot.md with current session state."""
+    try:
+        from cdx_brain.hot import write_hot
+        from cdx_brain.config import ConfigManager
+        cfg = ConfigManager().load()
+        summary = (assistant_content or "")[:200]
+        project = os.environ.get("CDX_BRAIN_PROJECT", "")
+        write_hot({
+            "project": project,
+            "status": "in_progress",
+            "summary": summary.strip(),
+            "next": "",
+        }, cfg)
+    except Exception:
+        pass
 if __name__ == "__main__":
     main()
+
+

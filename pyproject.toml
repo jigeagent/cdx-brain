@@ -1,31 +1,54 @@
 [build-system]
-requires = ["hatchling"]
+
+requires = [ "hatchling",]
+
 build-backend = "hatchling.build"
 
+
+
 [project]
+
 name = "cdx-brain"
-version = "0.9.0"
+
+version = "0.9.1"
+
 description = "Codex class brain memory system — three-tier memory architecture — SQLite+FTS5 hot storage, L1→L2→L3 cognitive pipeline (policy induction, skill crystallization, world model), optional OpenViking cold sync, and built-in viewer"
+
 readme = "README.md"
-license = { text = "AGPL-3.0-or-later" }
+
 requires-python = ">=3.10"
-dependencies = [
-    "httpx>=0.28",
-    "pyyaml>=6.0",
-    "numpy>=1.24",
-]
+
+dependencies = [ "httpx>=0.28", "pyyaml>=6.0", "numpy>=1.24",]
+
+
+
+[project.license]
+
+text = "AGPL-3.0-or-later"
+
+
 
 [project.urls]
+
 Homepage = "https://github.com/jigeagent/cdx-brain"
+
 Repository = "https://github.com/jigeagent/cdx-brain"
 
+
+
 [project.scripts]
+
 cdx-brain = "cdx_brain.cli:main"
 
+
+
 [tool.hatch.build]
-exclude = ["tests/"]
+
+exclude = [ "tests/",]
+
+
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
 
+testpaths = [ "tests",]
 

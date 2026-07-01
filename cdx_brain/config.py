@@ -32,6 +32,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "promote_threshold": 3,
         "promote_min_length": 150,
         "promote_cooldown_days": 7,
+        "hot": {
+            "enabled": True,
+            "path": "~/.cdx-brain/data/hot.md",
+            "max_age_hours": 24,
+            "max_tokens": 500,
+        },
         "max_cache_mb": 1000,
         "max_inject_native": 3,
     },
@@ -157,4 +163,6 @@ class ConfigManager:
 
         self.save(self._data)
         return self._data
+
+
 
